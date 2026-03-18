@@ -1,0 +1,12 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Log files
+dist/
+build/
+*.exe
+log/
+runlog/
+*.csv
+*.db
