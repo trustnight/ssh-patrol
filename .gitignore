@@ -1,12 +1,54 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
-
-# Log files
+*$py.class
+*.so
+.Python
+*.egg-info/
 dist/
 build/
+*.egg
+*.whl
+*.tar.gz
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.DS_Store
+
+# 打包输出
 *.exe
-log/
-runlog/
+*.dll
+*.pdb
+version_info.py
+
+# 数据库和日志（根据需要可取消注释）
+# patrol.db
+# log/
+
+# 临时文件
+*.log
+*.tmp
+*.bak
+temp/
+test/
+models/
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 *.csv
 *.db

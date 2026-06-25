@@ -1,0 +1,28 @@
+# FastAPI 后端依赖配置
+# 适配 Python 3.7.10
+
+# Web框架
+fastapi==0.95.2
+uvicorn==0.22.0
+
+# 数据验证
+pydantic==1.10.13
+
+# SSH登录库（巡检用）
+paramiko==2.7.2
+
+# SSH异步库
+asyncssh==2.9.0
+
+# 加密库
+cryptography==3.4.8
+
+# bcrypt
+bcrypt==3.1.7
+
+# 文件上传支持
+python-multipart==0.0.6
+
+# 打包工具
+pyinstaller==5.13.2
+pyinstaller-hooks-contrib==2023.8
