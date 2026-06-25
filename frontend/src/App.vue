@@ -30,6 +30,10 @@
           <el-icon><Setting /></el-icon>
           <span>设备管理</span>
         </el-menu-item>
+        <el-menu-item index="/screenshot">
+          <el-icon><Camera /></el-icon>
+          <span>截图</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -70,7 +74,8 @@ const currentPageTitle = computed(() => {
     '/patrol': '巡检任务',
     '/ssh-terminal': 'SSH终端',
     '/template-manage': '模板管理',
-    '/device-manage': '设备管理'
+    '/device-manage': '设备管理',
+    '/screenshot': '截图'
   }
   if (route.path.startsWith('/patrol/')) {
     return '任务详情'

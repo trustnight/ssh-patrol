@@ -71,6 +71,52 @@ class Database:
                 )
             ''')
 
+            # 创建截图URL表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS screenshot_urls (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT NOT NULL,
+                    ip TEXT,
+                    is_active INTEGER DEFAULT 0,
+                    created_at TEXT
+                )
+            ''')
+
+            # 创建截图历史表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS screenshot_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT,
+                    ip TEXT,
+                    file_path TEXT,
+                    created_at TEXT
+                )
+            ''')
+
+            # 创建截图任务表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS screenshot_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT,
+                    created_at TEXT
+                )
+            ''')
+
+            # 创建截图任务设备关联表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS screenshot_task_devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER,
+                    url_id INTEGER,
+                    url TEXT,
+                    ip TEXT,
+                    status TEXT DEFAULT 'pending',
+                    screenshot_count INTEGER DEFAULT 0,
+                    sort_order INTEGER DEFAULT 0,
+                    FOREIGN KEY (task_id) REFERENCES screenshot_tasks(id)
+                )
+            ''')
+
             # 检查命令表是否为空
             cursor.execute('SELECT COUNT(*) FROM commands')
             if cursor.fetchone()[0] == 0:
@@ -747,6 +793,393 @@ class Database:
         except Exception as e:
             print(f"获取巡检历史详情错误: {str(e)}")
             return None
+
+    # ==================== 截图相关方法 ====================
+
+    def add_screenshot_urls(self, urls):
+        """批量添加截图URL"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            for url in urls:
+                # 从URL提取IP
+                ip = self._extract_ip_from_url(url)
+                cursor.execute(
+                    'INSERT INTO screenshot_urls (url, ip, is_active, created_at) VALUES (?, ?, 0, ?)',
+                    (url, ip, now)
+                )
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"添加截图URL错误: {str(e)}")
+            return False
+
+    def get_screenshot_urls(self):
+        """获取所有截图URL"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT id, url, ip, is_active, created_at FROM screenshot_urls ORDER BY id')
+            result = cursor.fetchall()
+            conn.close()
+
+            urls = []
+            for row in result:
+                urls.append({
+                    "id": row[0],
+                    "url": row[1],
+                    "ip": row[2],
+                    "is_active": bool(row[3]),
+                    "created_at": row[4]
+                })
+            return urls
+        except Exception as e:
+            print(f"获取截图URL列表错误: {str(e)}")
+            return []
+
+    def clear_screenshot_urls(self):
+        """清空截图URL列表"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM screenshot_urls')
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"清空截图URL列表错误: {str(e)}")
+            return False
+
+    def set_active_screenshot_url(self, url_id):
+        """设置活跃的截图URL"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 先将所有URL设为非活跃
+            cursor.execute('UPDATE screenshot_urls SET is_active = 0')
+
+            # 设置指定URL为活跃
+            cursor.execute('UPDATE screenshot_urls SET is_active = 1 WHERE id = ?', (url_id,))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"设置活跃截图URL错误: {str(e)}")
+            return False
+
+    def get_active_screenshot_url(self):
+        """获取当前活跃的截图URL"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT id, url, ip FROM screenshot_urls WHERE is_active = 1 LIMIT 1')
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {"id": row[0], "url": row[1], "ip": row[2]}
+            return None
+        except Exception as e:
+            print(f"获取活跃截图URL错误: {str(e)}")
+            return None
+
+    def add_screenshot_record(self, url, ip, file_path):
+        """添加截图记录"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute(
+                'INSERT INTO screenshot_history (url, ip, file_path, created_at) VALUES (?, ?, ?, ?)',
+                (url, ip, file_path, now)
+            )
+
+            conn.commit()
+            record_id = cursor.lastrowid
+            conn.close()
+            return record_id
+        except Exception as e:
+            print(f"添加截图记录错误: {str(e)}")
+            return None
+
+    def get_screenshot_history(self, ip=None):
+        """获取截图历史"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            query = 'SELECT id, url, ip, file_path, created_at FROM screenshot_history WHERE 1=1'
+            params = []
+
+            if ip:
+                query += ' AND ip LIKE ?'
+                params.append(f'%{ip}%')
+
+            query += ' ORDER BY id DESC'
+
+            cursor.execute(query, params)
+            result = cursor.fetchall()
+            conn.close()
+
+            records = []
+            for row in result:
+                records.append({
+                    "id": row[0],
+                    "url": row[1],
+                    "ip": row[2],
+                    "file_path": row[3],
+                    "created_at": row[4]
+                })
+            return records
+        except Exception as e:
+            print(f"获取截图历史错误: {str(e)}")
+            return []
+
+    def get_screenshot_count_by_ip(self, ip):
+        """获取指定IP的截图数量"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT COUNT(*) FROM screenshot_history WHERE ip = ?', (ip,))
+            count = cursor.fetchone()[0]
+            conn.close()
+
+            return count
+        except Exception as e:
+            print(f"获取截图数量错误: {str(e)}")
+            return 0
+
+    # ==================== 截图任务方法 ====================
+
+    def create_screenshot_task(self, name, url_ids):
+        """创建截图任务"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute(
+                'INSERT INTO screenshot_tasks (name, created_at) VALUES (?, ?)',
+                (name, now)
+            )
+            task_id = cursor.lastrowid
+
+            # 从screenshot_urls表获取选中的URL信息
+            for order, url_id in enumerate(url_ids):
+                cursor.execute(
+                    'SELECT url, ip FROM screenshot_urls WHERE id = ?', (url_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute(
+                        'INSERT INTO screenshot_task_devices (task_id, url_id, url, ip, status, screenshot_count, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        (task_id, url_id, row[0], row[1], 'pending', 0, order)
+                    )
+
+            conn.commit()
+            conn.close()
+            return task_id
+        except Exception as e:
+            print(f"创建截图任务错误: {str(e)}")
+            return None
+
+    def get_screenshot_tasks(self):
+        """获取截图任务列表"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT id, name, created_at FROM screenshot_tasks ORDER BY id DESC')
+            result = cursor.fetchall()
+            conn.close()
+
+            tasks = []
+            for row in result:
+                tasks.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "created_at": row[2]
+                })
+            return tasks
+        except Exception as e:
+            print(f"获取截图任务列表错误: {str(e)}")
+            return []
+
+    def get_screenshot_task_devices(self, task_id):
+        """获取截图任务的设备列表（按状态排序：active→pending→done）"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT id, url_id, url, ip, status, screenshot_count, sort_order
+                FROM screenshot_task_devices
+                WHERE task_id = ?
+                ORDER BY
+                    CASE status
+                        WHEN 'active' THEN 0
+                        WHEN 'pending' THEN 1
+                        WHEN 'done' THEN 2
+                    END,
+                    sort_order
+            ''', (task_id,))
+            result = cursor.fetchall()
+            conn.close()
+
+            devices = []
+            for row in result:
+                devices.append({
+                    "id": row[0],
+                    "url_id": row[1],
+                    "url": row[2],
+                    "ip": row[3],
+                    "status": row[4],
+                    "screenshot_count": row[5],
+                    "sort_order": row[6]
+                })
+            return devices
+        except Exception as e:
+            print(f"获取截图任务设备列表错误: {str(e)}")
+            return []
+
+    def set_active_task_device(self, task_id, device_id):
+        """设置当前活跃设备：将当前active改为done，新设备设为active"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 将当前active设备改为done
+            cursor.execute(
+                "UPDATE screenshot_task_devices SET status = 'done' WHERE task_id = ? AND status = 'active'",
+                (task_id,)
+            )
+
+            # 获取当前最大sort_order（done的排最后）
+            cursor.execute(
+                'SELECT COALESCE(MAX(sort_order), 0) FROM screenshot_task_devices WHERE task_id = ?',
+                (task_id,)
+            )
+            max_order = cursor.fetchone()[0]
+
+            # 将新设备设为active，sort_order放到最前
+            cursor.execute(
+                "UPDATE screenshot_task_devices SET status = 'active', sort_order = -1 WHERE id = ? AND task_id = ?",
+                (device_id, task_id)
+            )
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"设置活跃设备错误: {str(e)}")
+            return False
+
+    def complete_task_device(self, task_id, device_id):
+        """将设备标记为完成并移到最后"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                'SELECT COALESCE(MAX(sort_order), 0) FROM screenshot_task_devices WHERE task_id = ?',
+                (task_id,)
+            )
+            max_order = cursor.fetchone()[0]
+
+            cursor.execute(
+                "UPDATE screenshot_task_devices SET status = 'done', sort_order = ? WHERE id = ? AND task_id = ?",
+                (max_order + 1, device_id, task_id)
+            )
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"完成设备错误: {str(e)}")
+            return False
+
+    def increment_task_device_count(self, task_id, device_id):
+        """设备截图计数+1"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                'UPDATE screenshot_task_devices SET screenshot_count = screenshot_count + 1 WHERE id = ? AND task_id = ?',
+                (device_id, task_id)
+            )
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"更新截图计数错误: {str(e)}")
+            return False
+
+    def get_task_device_by_id(self, device_id):
+        """获取任务设备详情"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                'SELECT id, task_id, url_id, url, ip, status, screenshot_count FROM screenshot_task_devices WHERE id = ?',
+                (device_id,)
+            )
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    "id": row[0],
+                    "task_id": row[1],
+                    "url_id": row[2],
+                    "url": row[3],
+                    "ip": row[4],
+                    "status": row[5],
+                    "screenshot_count": row[6]
+                }
+            return None
+        except Exception as e:
+            print(f"获取任务设备详情错误: {str(e)}")
+            return None
+
+    def delete_screenshot_task(self, task_id):
+        """删除截图任务及关联设备"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('DELETE FROM screenshot_task_devices WHERE task_id = ?', (task_id,))
+            cursor.execute('DELETE FROM screenshot_tasks WHERE id = ?', (task_id,))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"删除截图任务错误: {str(e)}")
+            return False
+
+    def _extract_ip_from_url(self, url):
+        """从URL中提取IP地址"""
+        try:
+            # 移除协议前缀
+            url = url.replace('https://', '').replace('http://', '')
+            # 移除端口号和路径
+            ip = url.split(':')[0].split('/')[0]
+            return ip
+        except Exception:
+            return ''
 
 
 db = Database()

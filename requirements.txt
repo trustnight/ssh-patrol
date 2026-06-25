@@ -23,6 +23,12 @@ bcrypt==3.1.7
 # 文件上传支持
 python-multipart==0.0.6
 
+# 全局快捷键监听
+pynput==1.7.6
+
+# 全屏截图
+Pillow>=9.0.0
+
 # 打包工具
 pyinstaller==5.13.2
 pyinstaller-hooks-contrib==2023.8

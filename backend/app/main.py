@@ -12,6 +12,7 @@ from app.database import db
 from app.api.templates import router as templates_router
 from app.api.devices import router as devices_router
 from app.api.patrol import router as patrol_router
+from app.api.screenshot import router as screenshot_router
 from app.websocket.ssh_terminal import router as ssh_ws_router
 from app.websocket.patrol_log import router as patrol_ws_router
 from app.services.task_manager import task_manager
@@ -91,6 +92,7 @@ def create_app():
     app.include_router(templates_router)
     app.include_router(devices_router)
     app.include_router(patrol_router)
+    app.include_router(screenshot_router)
 
     # 注册 WebSocket 路由
     app.include_router(ssh_ws_router)

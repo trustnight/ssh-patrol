@@ -30,6 +30,11 @@ const routes = [
     path: '/device-manage',
     name: 'DeviceManage',
     component: () => import('@/views/DeviceManage.vue')
+  },
+  {
+    path: '/screenshot',
+    name: 'Screenshot',
+    component: () => import('@/views/Screenshot.vue')
   }
 ]
 

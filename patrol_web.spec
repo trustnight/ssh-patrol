@@ -95,6 +95,11 @@ hiddenimports = [
     "encodings.gbk",
     "encodings.gb2312",
     "encodings.gb18030",
+    # 全局快捷键监听
+    "pynput",
+    "pynput.keyboard",
+    "pynput.mouse",
+    "pynput._util.win32",
     # 其他
     "six",
     "cffi",
