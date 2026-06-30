@@ -34,22 +34,27 @@ frontend/.DS_Store
 *.pdb
 version_info.py
 
-# 数据库和日志（根据需要可取消注释）
-# patrol.db
-# log/
+# 数据库和日志
+patrol.db
+*.log
+*.db
+
+# 运行时数据
+run_dev/
+screen/
+
+# WorkBuddy 工作目录
+.workbuddy/
+.claude/
+.claude.json
+TASK.md
 
 # 临时文件
-*.log
-*.tmp
-*.bak
 temp/
 test/
 models/
-run_dev/
 
 # Windows
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-*.csv
-*.db
