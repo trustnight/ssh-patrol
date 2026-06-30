@@ -53,8 +53,14 @@ TASK.md
 temp/
 test/
 models/
+run_dev/
+.workbuddy/
+.claude/
 
 # Windows
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+*.csv
+*.db
+*.md
