@@ -1,20 +1,10 @@
 import request from '@/utils/request'
 
-// ==================== URL管理 ====================
+// ==================== 设备URL获取 ====================
 
-// 导入URL列表
-export function importUrls(text) {
-  return request({ url: '/screenshot/import-urls', method: 'post', data: { text } })
-}
-
-// 获取URL列表
-export function getUrlList() {
-  return request({ url: '/screenshot/urls', method: 'get' })
-}
-
-// 清空URL列表
-export function clearUrls() {
-  return request({ url: '/screenshot/clear-urls', method: 'post' })
+// 获取有URL的设备列表（从设备管理）
+export function getDevicesWithUrl() {
+  return request({ url: '/screenshot/devices-with-url', method: 'get' })
 }
 
 // ==================== 截图任务 ====================
@@ -74,6 +64,16 @@ export function setHotkey(hotkey) {
 // 获取截图历史
 export function getScreenshotHistory(ip) {
   return request({ url: '/screenshot/history', method: 'get', params: ip ? { ip } : {} })
+}
+
+// 清空截图历史（同时删除本地文件）
+export function clearScreenshotHistory() {
+  return request({ url: '/screenshot/clear-history', method: 'post' })
+}
+
+// 删除单条截图历史（同时删除本地文件）
+export function deleteScreenshotRecord(recordId) {
+  return request({ url: `/screenshot/history/${recordId}`, method: 'delete' })
 }
 
 // 启动监听

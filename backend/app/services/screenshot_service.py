@@ -4,13 +4,21 @@
 提供全屏截图、URL管理、任务管理、快捷键监听等功能
 """
 import os
-import sys
+import time
+import ctypes
 import webbrowser
 import threading
+from datetime import datetime
 from PIL import ImageGrab
 from pynput import keyboard
 from app.database import db
-from app.config import get_exe_dir
+from app.config import get_data_dir
+
+# Windows 常量
+SW_RESTORE = 9
+
+# 加载 Win32 API
+_user32 = ctypes.windll.user32
 
 
 class ScreenshotService:
@@ -28,13 +36,13 @@ class ScreenshotService:
 
     def _get_screen_dir(self):
         """获取截图保存目录"""
-        screen_dir = os.path.join(get_exe_dir(), 'screen')
+        screen_dir = os.path.join(get_data_dir(), 'screen')
         if not os.path.exists(screen_dir):
             os.makedirs(screen_dir)
         return screen_dir
 
     def set_hotkey(self, hotkey_str):
-        """设置快捷键"""
+        """设置截图快捷键"""
         self.hotkey = hotkey_str
         if self.is_listening:
             self.stop_listening()
@@ -46,17 +54,14 @@ class ScreenshotService:
             return True
 
         try:
-            hotkey = self.hotkey
-
-            def on_activate():
+            def on_capture():
                 self.capture_screen()
 
-            self.listener = keyboard.GlobalHotKeys({
-                hotkey: on_activate
-            })
+            hotkey_map = {self.hotkey: on_capture}
+            self.listener = keyboard.GlobalHotKeys(hotkey_map)
             self.listener.start()
             self.is_listening = True
-            print(f"[截图服务] 开始监听快捷键: {self.hotkey}")
+            print(f"[截图服务] 快捷键监听已启动 ({self.hotkey})")
             return True
         except Exception as e:
             print(f"[截图服务] 启动监听失败: {str(e)}")
@@ -68,7 +73,20 @@ class ScreenshotService:
             self.listener.stop()
             self.listener = None
         self.is_listening = False
-        print("[截图服务] 停止监听快捷键")
+        print("[截图服务] 停止快捷键监听")
+
+    def _bring_browser_to_front(self):
+        """URL 跳转后将浏览器窗口拉到前台"""
+        time.sleep(0.5)
+        _user32.AllowSetForegroundWindow(-1)
+        hwnd = _user32.GetForegroundWindow()
+        if hwnd:
+            if _user32.IsIconic(hwnd):
+                _user32.ShowWindow(hwnd, SW_RESTORE)
+            _user32.SetForegroundWindow(hwnd)
+            print(f"[截图服务] 浏览器窗口已聚焦: {hwnd}")
+        else:
+            print("[截图服务] 未找到前台窗口")
 
     def set_active_url(self, url):
         """设置当前活跃URL（兼容旧接口）"""
@@ -87,6 +105,8 @@ class ScreenshotService:
         if not self.is_listening:
             self.start_listening()
 
+        threading.Thread(target=self._bring_browser_to_front, daemon=True).start()
+
         print(f"[截图服务] 设置活跃URL: {url}, IP: {self.current_ip}")
         return True
 
@@ -97,54 +117,54 @@ class ScreenshotService:
             print(f"[截图服务] 设备不存在: {device_id}")
             return False
 
-        # 更新数据库状态
         db.set_active_task_device(task_id, device_id)
 
-        # 更新内存状态
         self.current_task_id = task_id
         self.current_device_id = device_id
         self.current_url = device['url']
         self.current_ip = device['ip']
         self.screenshot_count = db.get_screenshot_count_by_ip(self.current_ip)
 
-        # 打开浏览器
         webbrowser.open(device['url'])
 
-        # 启动快捷键监听
         if not self.is_listening:
             self.start_listening()
+
+        threading.Thread(target=self._bring_browser_to_front, daemon=True).start()
 
         print(f"[截图服务] 设置活跃设备: {device['ip']}, URL: {device['url']}")
         return True
 
     def capture_screen(self):
-        """全屏截图（不弹光标选区）"""
-        if not self.current_ip:
-            print("[截图服务] 未设置活跃URL")
-            return None
-
+        """全屏截图（全局可用，不依赖活跃设备）"""
         try:
             screen_dir = self._get_screen_dir()
 
-            # 计算文件名
+            # 计算文件名：有活跃设备用IP命名，否则用时间戳
             self.screenshot_count += 1
-            if self.screenshot_count == 1:
-                filename = self.current_ip
+            if self.current_ip:
+                if self.screenshot_count == 1:
+                    filename = self.current_ip
+                else:
+                    filename = f"{self.current_ip}_{self.screenshot_count}"
             else:
-                filename = f"{self.current_ip}_{self.screenshot_count}"
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = f"screenshot_{ts}"
 
-            file_path = os.path.join(screen_dir, f"{filename}.bmp")
+            file_path = os.path.join(screen_dir, f"{filename}.jpg")
 
-            # PIL全屏截图，不弹光标
+            # PIL全屏截图
             img = ImageGrab.grab()
-            img.save(file_path, 'BMP')
+            if img.mode == 'RGBA':
+                img = img.convert('RGB')
+            img.save(file_path, 'JPEG', quality=85, optimize=True)
 
-            # 记录到数据库
-            db.add_screenshot_record(self.current_url, self.current_ip, file_path)
+            # 有活跃设备时记录到数据库
+            if self.current_ip:
+                db.add_screenshot_record(self.current_url, self.current_ip, file_path)
 
-            # 如果是任务设备，更新任务设备的截图计数
-            if self.current_task_id and self.current_device_id:
-                db.increment_task_device_count(self.current_task_id, self.current_device_id)
+                if self.current_task_id and self.current_device_id:
+                    db.increment_task_device_count(self.current_task_id, self.current_device_id)
 
             print(f"[截图服务] 全屏截图成功: {file_path}")
             return file_path
@@ -168,7 +188,7 @@ class ScreenshotService:
             "current_device_id": self.current_device_id,
             "screenshot_count": self.screenshot_count,
             "is_listening": self.is_listening,
-            "hotkey": self.hotkey
+            "hotkey": self.hotkey,
         }
 
     def _extract_ip_from_url(self, url):

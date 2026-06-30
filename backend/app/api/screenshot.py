@@ -3,13 +3,13 @@
 截图相关API路由
 """
 import os
-import subprocess
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from app.models.schemas import ApiResponse
 from app.database import db
-from app.config import get_exe_dir
+from app.config import get_data_dir
 from app.services.screenshot_service import screenshot_service
 
 router = APIRouter(prefix="/api/screenshot", tags=["截图管理"])
@@ -33,9 +33,9 @@ class SetHotkeyRequest(BaseModel):
 
 
 class CreateTaskRequest(BaseModel):
-    """创建截图任务请求"""
+    """创建截图任务请求（使用设备管理中的device_ids）"""
     name: str
-    url_ids: List[int]
+    device_ids: List[int]
 
 
 class SetActiveDeviceRequest(BaseModel):
@@ -80,11 +80,21 @@ def clear_urls():
 
 # ==================== 截图任务管理 ====================
 
+@router.get("/devices-with-url", response_model=ApiResponse, summary="获取有URL的设备列表")
+def get_devices_with_url():
+    """从设备管理列表中获取所有配置了URL的设备（供截图任务创建使用）"""
+    try:
+        devices = db.get_devices_with_url()
+        return ApiResponse(code=0, message="success", data={"devices": devices})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取设备列表失败: {str(e)}")
+
+
 @router.post("/tasks", response_model=ApiResponse, summary="创建截图任务")
 def create_task(request: CreateTaskRequest):
-    """创建截图任务"""
+    """创建截图任务（从设备管理列表中选择设备）"""
     try:
-        task_id = db.create_screenshot_task(request.name, request.url_ids)
+        task_id = db.create_screenshot_task(request.name, request.device_ids)
         if task_id:
             return ApiResponse(code=0, message="任务创建成功", data={"task_id": task_id})
         else:
@@ -163,7 +173,7 @@ def set_active_url(request: SetActiveUrlRequest):
 
 @router.post("/capture", response_model=ApiResponse, summary="执行全屏截图")
 def capture():
-    """执行全屏截图（不弹光标选区）"""
+    """执行全屏截图（不弹光标选区，全局可用）"""
     try:
         file_path = screenshot_service.capture_screen()
         if file_path:
@@ -204,6 +214,81 @@ def get_history(ip: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"获取截图历史失败: {str(e)}")
 
 
+def _delete_file_safe(file_path):
+    """安全删除本地截图文件，返回 True/False"""
+    if not file_path:
+        return False
+    path = Path(file_path)
+    if path.is_file():
+        try:
+            path.unlink()
+            return True
+        except OSError as e:
+            print(f"删除文件失败: {file_path}, 错误: {e}")
+            return False
+    return False
+
+
+def _normalize_path(file_path):
+    """确保路径是绝对路径"""
+    p = Path(file_path)
+    if not p.is_absolute():
+        # 相对于 exe 目录
+        p = Path(get_data_dir()) / p
+    return str(p)
+
+
+@router.post("/clear-history", response_model=ApiResponse, summary="清空截图历史")
+def clear_history():
+    """清空所有截图历史记录，同时删除本地截图文件"""
+    try:
+        # 1. 获取所有截图文件路径
+        file_paths = db.clear_screenshot_history()
+
+        # 2. 删除本地文件（使用 pathlib 更健壮）
+        deleted_count = 0
+        fail_paths = []
+        for fp in file_paths:
+            fp = _normalize_path(fp)
+            if _delete_file_safe(fp):
+                deleted_count += 1
+            else:
+                fail_paths.append(fp)
+
+        fail_count = len(fail_paths)
+        msg = f"已清空 {len(file_paths)} 条记录，删除了 {deleted_count} 个文件"
+        if fail_count > 0:
+            msg += f"，{fail_count} 个文件删除失败"
+            print(f"[截图] 删除失败的文件: {fail_paths}")
+
+        return ApiResponse(
+            code=0,
+            message=msg,
+            data={"total_records": len(file_paths), "deleted_files": deleted_count, "failed": fail_count}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"清空截图历史失败: {str(e)}")
+
+
+@router.delete("/history/{record_id}", response_model=ApiResponse, summary="删除单条截图历史")
+def delete_record(record_id: int):
+    """删除单条截图历史记录，同时删除本地文件"""
+    try:
+        file_path = db.delete_screenshot_record(record_id)
+        if file_path is None:
+            return ApiResponse(code=1, message="记录不存在", data=None)
+
+        file_path = _normalize_path(file_path)
+        file_deleted = _delete_file_safe(file_path)
+
+        return ApiResponse(
+            code=0,
+            message=f"已删除记录，本地文件{'已' if file_deleted else '未'}清理",
+            data={"record_id": record_id, "file_deleted": file_deleted}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除截图记录失败: {str(e)}")
+
 @router.post("/start-listening", response_model=ApiResponse, summary="启动快捷键监听")
 def start_listening():
     """启动快捷键监听"""
@@ -231,10 +316,10 @@ def stop_listening():
 def open_folder():
     """打开截图保存文件夹"""
     try:
-        screen_dir = os.path.join(get_exe_dir(), 'screen')
+        screen_dir = os.path.join(get_data_dir(), 'screen')
         if not os.path.exists(screen_dir):
             os.makedirs(screen_dir)
-        subprocess.Popen(['explorer', screen_dir])
+        os.startfile(screen_dir)
         return ApiResponse(code=0, message="已打开文件夹", data={"path": screen_dir})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"打开文件夹失败: {str(e)}")

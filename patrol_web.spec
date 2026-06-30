@@ -105,6 +105,16 @@ hiddenimports = [
     "cffi",
     "pycparser",
     "pynacl",
+    # 系统托盘
+    "pystray",
+    "pystray._win32",
+    "pystray._base",
+    "PIL",
+    "PIL.Image",
+    "PIL.ImageDraw",
+    "tkinter",
+    "tkinter.messagebox",
+    "tkinter.scrolledtext",
 ]
 
 a = Analysis(
@@ -116,7 +126,6 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     excludes=[
-        'tkinter',
         'PyQt5',
         'PyQt4',
         'matplotlib',
@@ -147,10 +156,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
+    console=False,  # 不弹 CMD 窗口，使用系统托盘
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
-    console=True,
+    runtime_tmpdir=None,  # 用 PyInstaller 默认临时目录，退出时由 bootloader 自动清理
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

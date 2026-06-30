@@ -33,6 +33,23 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="设备类型">
+          <el-select
+            v-model="selectForm.deviceType"
+            placeholder="设备类型"
+            style="width: 160px"
+            @change="handleDeviceTypeChange"
+          >
+            <el-option label="FW" value="FW" />
+            <el-option label="SW" value="SW" />
+            <el-option label="RT" value="RT" />
+            <el-option label="IPS" value="IPS" />
+            <el-option label="WAF" value="WAF" />
+            <el-option label="DDOS" value="DDOS" />
+            <el-option label="WOC" value="WOC" />
+            <el-option label="other" value="other" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-tag :type="templateTagType" size="small">{{ templateTagText }}</el-tag>
         </el-form-item>
@@ -165,6 +182,18 @@
                   <el-option label="其他" value="Other" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="设备类型">
+                <el-select v-model="saveForm.deviceType" placeholder="设备类型" style="width: 100%">
+                  <el-option label="FW" value="FW" />
+                  <el-option label="SW" value="SW" />
+                  <el-option label="RT" value="RT" />
+                  <el-option label="IPS" value="IPS" />
+                  <el-option label="WAF" value="WAF" />
+                  <el-option label="DDOS" value="DDOS" />
+                  <el-option label="WOC" value="WOC" />
+                  <el-option label="other" value="other" />
+                </el-select>
+              </el-form-item>
               <el-form-item>
                 <el-button
                   type="primary"
@@ -206,7 +235,8 @@ const manufacturerList = ref([])
 // 选择表单
 const selectForm = reactive({
   templateName: '',
-  manufacturer: ''
+  manufacturer: '',
+  deviceType: 'FW'
 })
 
 // 命令列表
@@ -224,7 +254,8 @@ const batchCommands = ref('')
 // 保存表单
 const saveForm = reactive({
   templateName: '',
-  manufacturer: ''
+  manufacturer: '',
+  deviceType: 'FW'
 })
 
 // 保存中
@@ -261,6 +292,7 @@ const handleTemplateChange = async () => {
   
   manufacturerList.value = []
   selectForm.manufacturer = ''
+  selectForm.deviceType = 'FW'
   commandList.value = []
   
   try {
@@ -269,7 +301,7 @@ const handleTemplateChange = async () => {
       manufacturerList.value = res.data.manufacturers || []
       if (manufacturerList.value.length > 0) {
         selectForm.manufacturer = manufacturerList.value[0]
-        handleManufacturerChange()
+        await loadCommands()
       }
     }
   } catch (error) {
@@ -277,12 +309,12 @@ const handleTemplateChange = async () => {
   }
 }
 
-// 厂商变化
-const handleManufacturerChange = async () => {
+// 加载命令列表
+const loadCommands = async () => {
   if (!selectForm.templateName || !selectForm.manufacturer) return
   
   try {
-    const res = await getTemplateCommands(selectForm.templateName, selectForm.manufacturer)
+    const res = await getTemplateCommands(selectForm.templateName, selectForm.manufacturer, selectForm.deviceType || '')
     if (res.code === 0) {
       commandList.value = res.data.commands || []
       // 更新保存表单
@@ -293,6 +325,11 @@ const handleManufacturerChange = async () => {
     console.error('加载命令列表失败:', error)
     ElMessage.error('加载命令列表失败')
   }
+}
+
+// 设备类型变化
+const handleDeviceTypeChange = async () => {
+  await loadCommands()
 }
 
 // 选择命令
@@ -419,7 +456,8 @@ const saveCustomTemplate = async () => {
     const res = await apiSaveCustomTemplate(
       saveForm.templateName,
       saveForm.manufacturer,
-      commands
+      commands,
+      saveForm.deviceType || ''
     )
     
     if (res.code === 0) {
@@ -456,10 +494,13 @@ onMounted(() => {
 
 <style scoped>
 .page-container {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: calc(100vh - 120px);
 }
 
 .header-card {
@@ -468,7 +509,7 @@ onMounted(() => {
 
 .content-row {
   flex: 1;
-  overflow: hidden;
+  min-height: 0;
 }
 
 .command-list-card {

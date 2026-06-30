@@ -20,7 +20,7 @@
             <el-option
               v-for="device in deviceList"
               :key="device.id"
-              :label="`${device.ip} - ${device.manufacturer}`"
+              :label="`${maskText(device.ip, 'ip')} - ${device.manufacturer}`"
               :value="device.id"
             />
           </el-select>
@@ -150,6 +150,9 @@ import { ElMessage } from 'element-plus'
 import { singlePatrol } from '@/api/patrol'
 import { getDeviceList } from '@/api/devices'
 import { getTemplateList } from '@/api/templates'
+import { useSettings } from '@/composables/useSettings'
+
+const { maskText } = useSettings()
 
 // 设备列表
 const deviceList = ref([])
@@ -270,7 +273,7 @@ const handlePatrol = async () => {
   patrolSuccess.value = false
 
   appendLog('正在连接设备并执行巡检...\n')
-  appendLog(`设备IP: ${form.ip}\n`)
+  appendLog(`设备IP: ${maskText(form.ip, 'ip')}\n`)
   appendLog(`厂商: ${form.manufacturer}\n`)
   appendLog(`模板: ${form.template_name}\n`)
   appendLog('----------------------------------------\n')
@@ -362,6 +365,10 @@ onMounted(() => {
 
 <style scoped>
 .page-container {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 20px;

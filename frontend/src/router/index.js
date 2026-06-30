@@ -35,6 +35,11 @@ const routes = [
     path: '/screenshot',
     name: 'Screenshot',
     component: () => import('@/views/Screenshot.vue')
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: () => import('@/views/Settings.vue')
   }
 ]
 

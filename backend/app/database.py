@@ -26,6 +26,7 @@ class Database:
                     template_id INTEGER,
                     template_name TEXT,
                     manufacturer TEXT,
+                    device_type TEXT DEFAULT '',
                     command TEXT,
                     cmd_order INTEGER,
                     is_custom INTEGER DEFAULT 0
@@ -47,15 +48,41 @@ class Database:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS devices (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sort_order INTEGER DEFAULT 0,
                     manufacturer TEXT,
+                    device_type TEXT DEFAULT '',
                     ip TEXT,
                     username TEXT,
                     password TEXT,
                     port INTEGER DEFAULT 22,
+                    url TEXT DEFAULT '',
                     created_at TEXT,
                     updated_at TEXT
                 )
             ''')
+
+            # 兼容旧数据库：为devices表添加缺失列（如果不存在）
+            for col, col_type, col_default in [
+                ('url', "TEXT", "''"),
+                ('sort_order', "INTEGER", '0'),
+                ('device_type', "TEXT", "''"),
+            ]:
+                try:
+                    cursor.execute(f'ALTER TABLE devices ADD COLUMN {col} {col_type} DEFAULT {col_default}')
+                except sqlite3.OperationalError:
+                    pass  # 列已存在
+
+            # 兼容旧数据库：为commands表添加device_type列
+            try:
+                cursor.execute("ALTER TABLE commands ADD COLUMN device_type TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # 列已存在
+
+            # 迁移旧数据：将内置模板中 device_type='' 的记录统一归类为 FW（防火墙）
+            cursor.execute(
+                "UPDATE commands SET device_type = 'FW' WHERE is_custom = 0 AND (device_type = '' OR device_type IS NULL)"
+            )
+            print("旧内置指令已归类到 FW 设备类型")
 
             # 创建巡检历史表
             cursor.execute('''
@@ -114,6 +141,20 @@ class Database:
                     screenshot_count INTEGER DEFAULT 0,
                     sort_order INTEGER DEFAULT 0,
                     FOREIGN KEY (task_id) REFERENCES screenshot_tasks(id)
+                )
+            ''')
+
+            # ══════════════════════════════════════════════════
+            #  终端连接历史表
+            # ══════════════════════════════════════════════════
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS terminal_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip TEXT NOT NULL,
+                    port TEXT DEFAULT '22',
+                    username TEXT,
+                    protocol TEXT DEFAULT 'ssh',
+                    connected_at TEXT NOT NULL
                 )
             ''')
 
@@ -272,8 +313,8 @@ class Database:
                 for manufacturer, commands in manufacturers.items():
                     for cmd_order, cmd in enumerate(commands, 1):
                         cursor.execute(
-                            'INSERT INTO commands (template_id, template_name, manufacturer, command, cmd_order, is_custom) VALUES (?, ?, ?, ?, ?, ?)',
-                            (template_id, template_name, manufacturer, cmd, cmd_order, 0)
+                            'INSERT INTO commands (template_id, template_name, manufacturer, device_type, command, cmd_order, is_custom) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                            (template_id, template_name, manufacturer, 'FW', cmd, cmd_order, 0)
                         )
 
             self.conn.commit()
@@ -316,15 +357,24 @@ class Database:
         except Exception as e:
             print(f"初始化厂商命令错误: {str(e)}")
 
-    def get_cmd_template(self, template_name, manufacturer):
-        """获取命令模板"""
+    def get_cmd_template(self, template_name, manufacturer, device_type=''):
+        """获取命令模板（必须指定设备类型才能匹配指令）
+
+        匹配策略：
+          1. device_type 为空 → 返回空列表（未绑定设备类型则不允许巡检）
+          2. device_type 非空 → 精确匹配 template_name + manufacturer + device_type
+        """
+        if not device_type:
+            print(f"巡检警告: 设备厂商={manufacturer}, 模板={template_name}，未指定设备类型，跳过命令匹配")
+            return []
+
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
             cursor.execute(
-                'SELECT command FROM commands WHERE template_name = ? AND LOWER(manufacturer) = LOWER(?) ORDER BY cmd_order',
-                (template_name, manufacturer)
+                'SELECT command FROM commands WHERE template_name = ? AND LOWER(manufacturer) = LOWER(?) AND LOWER(device_type) = LOWER(?) ORDER BY cmd_order',
+                (template_name, manufacturer, device_type)
             )
             result = cursor.fetchall()
             conn.close()
@@ -351,16 +401,27 @@ class Database:
             print(f"获取模板列表错误: {str(e)}")
             return []
 
-    def get_template_manufacturers(self, template_name):
-        """获取指定模板支持的厂商列表"""
+    def get_template_manufacturers(self, template_name, device_type=''):
+        """获取指定模板支持的厂商列表
+
+        Args:
+            template_name: 模板名称
+            device_type: 设备类型筛选（可选）
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute(
-                'SELECT DISTINCT manufacturer FROM commands WHERE template_name = ? ORDER BY manufacturer',
-                (template_name,)
-            )
+            if device_type:
+                cursor.execute(
+                    'SELECT DISTINCT manufacturer FROM commands WHERE template_name = ? AND device_type = ? ORDER BY manufacturer',
+                    (template_name, device_type)
+                )
+            else:
+                cursor.execute(
+                    'SELECT DISTINCT manufacturer FROM commands WHERE template_name = ? ORDER BY manufacturer',
+                    (template_name,)
+                )
             result = cursor.fetchall()
             conn.close()
 
@@ -369,16 +430,27 @@ class Database:
             print(f"获取模板厂商列表错误: {str(e)}")
             return []
 
-    def get_template_commands(self, template_name, manufacturer):
-        """获取模板命令列表（带详细信息）"""
+    def get_template_commands(self, template_name, manufacturer, device_type=''):
+        """获取模板命令列表（带详细信息）
+
+        Args:
+            template_name: 模板名称
+            manufacturer: 设备厂商
+            device_type: 设备类型（可选）
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            cursor.execute(
-                'SELECT id, command, cmd_order, is_custom FROM commands WHERE template_name = ? AND LOWER(manufacturer) = LOWER(?) ORDER BY cmd_order',
-                (template_name, manufacturer)
-            )
+            if device_type:
+                cursor.execute(
+                    'SELECT id, command, cmd_order, is_custom, device_type FROM commands WHERE template_name = ? AND LOWER(manufacturer) = LOWER(?) AND LOWER(device_type) = LOWER(?) ORDER BY cmd_order',
+                    (template_name, manufacturer, device_type)
+                )
+            else:
+                # 模板管理页面未选设备类型时，不显示任何命令（巡检流程走 get_cmd_template，不受影响）
+                conn.close()
+                return []
             result = cursor.fetchall()
             conn.close()
 
@@ -387,7 +459,8 @@ class Database:
                     "id": row[0],
                     "command": row[1],
                     "cmd_order": row[2],
-                    "is_custom": bool(row[3])
+                    "is_custom": bool(row[3]),
+                    "device_type": row[4] if len(row) > 4 else ''
                 }
                 for row in result
             ]
@@ -395,15 +468,22 @@ class Database:
             print(f"获取模板命令错误: {str(e)}")
             return []
 
-    def save_custom_template(self, template_name, manufacturer, commands):
-        """保存自定义模板命令"""
+    def save_custom_template(self, template_name, manufacturer, commands, device_type=''):
+        """保存自定义模板命令
+
+        Args:
+            template_name: 模板名称
+            manufacturer: 设备厂商
+            commands: 命令列表
+            device_type: 设备类型（可选）
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
             cursor.execute(
-                'DELETE FROM commands WHERE template_name = ? AND LOWER(manufacturer) = LOWER(?) AND is_custom = 1',
-                (template_name, manufacturer)
+                'DELETE FROM commands WHERE template_name = ? AND LOWER(manufacturer) = LOWER(?) AND is_custom = 1 AND device_type = ?',
+                (template_name, manufacturer, device_type or '')
             )
 
             template_id = 2
@@ -417,8 +497,8 @@ class Database:
 
             for cmd_order, cmd in enumerate(commands, 1):
                 cursor.execute(
-                    'INSERT INTO commands (template_id, template_name, manufacturer, command, cmd_order, is_custom) VALUES (?, ?, ?, ?, ?, ?)',
-                    (template_id, template_name, manufacturer, cmd, cmd_order, 1)
+                    'INSERT INTO commands (template_id, template_name, manufacturer, device_type, command, cmd_order, is_custom) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    (template_id, template_name, manufacturer, device_type or '', cmd, cmd_order, 1)
                 )
 
             conn.commit()
@@ -482,40 +562,53 @@ class Database:
         except Exception:
             return False
 
-    def add_device(self, manufacturer, ip, username, password, port=22):
-        """新增设备（IP重复时返回 None 表示已存在）"""
+    def add_device(self, manufacturer, ip, username, password, port=22, url='', sort_order=0, device_type=''):
+        """新增/更新设备（IP重复时自动更新已有记录）
+
+        Returns:
+            (device_id, 'insert') 或 (device_id, 'update') 或 (None, None)
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-
-            # 检查IP是否已存在
-            cursor.execute('SELECT id FROM devices WHERE ip = ?', (ip,))
-            if cursor.fetchone():
-                conn.close()
-                return None  # IP已存在，拒绝重复添加
-
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             encrypted_password = crypto.encrypt(password) if not crypto.is_encrypted(password) else password
 
-            cursor.execute(
-                'INSERT INTO devices (manufacturer, ip, username, password, port, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                (manufacturer, ip, username, encrypted_password, port, now, now)
-            )
-            conn.commit()
-            device_id = cursor.lastrowid
-            conn.close()
-            return device_id
+            # 检查IP是否已存在
+            cursor.execute('SELECT id FROM devices WHERE ip = ?', (ip,))
+            existing = cursor.fetchone()
+
+            if existing:
+                # IP已存在 → 更新所有字段
+                device_id = existing[0]
+                cursor.execute(
+                    'UPDATE devices SET sort_order=?, manufacturer=?, device_type=?, username=?, password=?, port=?, url=?, updated_at=? WHERE id=?',
+                    (sort_order, manufacturer, device_type or '', username, encrypted_password, port, url or '', now, device_id)
+                )
+                conn.commit()
+                conn.close()
+                return (device_id, 'update')
+            else:
+                # 新设备 → 插入
+                cursor.execute(
+                    'INSERT INTO devices (sort_order, manufacturer, device_type, ip, username, password, port, url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (sort_order, manufacturer, device_type or '', ip, username, encrypted_password, port, url or '', now, now)
+                )
+                conn.commit()
+                device_id = cursor.lastrowid
+                conn.close()
+                return (device_id, 'insert')
         except Exception as e:
             print(f"新增设备错误: {str(e)}")
-            return None
+            return (None, None)
 
     def get_devices(self, keyword=None, manufacturer=None):
-        """获取设备列表"""
+        """获取设备列表（按序号排序）"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            query = 'SELECT id, manufacturer, ip, username, password, port, created_at, updated_at FROM devices WHERE 1=1'
+            query = 'SELECT id, sort_order, manufacturer, device_type, ip, username, password, port, url, created_at, updated_at FROM devices WHERE 1=1'
             params = []
 
             if keyword:
@@ -528,7 +621,7 @@ class Database:
                 query += ' AND manufacturer = ?'
                 params.append(manufacturer)
 
-            query += ' ORDER BY id DESC'
+            query += ' ORDER BY sort_order ASC, id ASC'
 
             cursor.execute(query, params)
             result = cursor.fetchall()
@@ -538,13 +631,16 @@ class Database:
             for row in result:
                 devices.append({
                     "id": row[0],
-                    "manufacturer": row[1],
-                    "ip": row[2],
-                    "username": row[3],
-                    "password": row[4],
-                    "port": row[5],
-                    "created_at": row[6],
-                    "updated_at": row[7]
+                    "sort_order": row[1] or 0,
+                    "manufacturer": row[2],
+                    "device_type": row[3] or '',
+                    "ip": row[4],
+                    "username": row[5],
+                    "password": row[6],
+                    "port": row[7],
+                    "url": row[8] or '',
+                    "created_at": row[9],
+                    "updated_at": row[10]
                 })
             return devices
         except Exception as e:
@@ -558,7 +654,7 @@ class Database:
             cursor = conn.cursor()
 
             cursor.execute(
-                'SELECT id, manufacturer, ip, username, password, port, created_at, updated_at FROM devices WHERE id = ?',
+                'SELECT id, sort_order, manufacturer, device_type, ip, username, password, port, url, created_at, updated_at FROM devices WHERE id = ?',
                 (device_id,)
             )
             row = cursor.fetchone()
@@ -567,20 +663,23 @@ class Database:
             if row:
                 return {
                     "id": row[0],
-                    "manufacturer": row[1],
-                    "ip": row[2],
-                    "username": row[3],
-                    "password": row[4],
-                    "port": row[5],
-                    "created_at": row[6],
-                    "updated_at": row[7]
+                    "sort_order": row[1] or 0,
+                    "manufacturer": row[2],
+                    "device_type": row[3] or '',
+                    "ip": row[4],
+                    "username": row[5],
+                    "password": row[6],
+                    "port": row[7],
+                    "url": row[8] or '',
+                    "created_at": row[9],
+                    "updated_at": row[10]
                 }
             return None
         except Exception as e:
             print(f"获取设备详情错误: {str(e)}")
             return None
 
-    def update_device(self, device_id, manufacturer=None, ip=None, username=None, password=None, port=None):
+    def update_device(self, device_id, manufacturer=None, ip=None, username=None, password=None, port=None, url=None, sort_order=None, device_type=None):
         """更新设备信息"""
         try:
             conn = sqlite3.connect(self.db_path)
@@ -590,9 +689,15 @@ class Database:
             update_fields = []
             params = []
 
+            if sort_order is not None:
+                update_fields.append('sort_order = ?')
+                params.append(sort_order)
             if manufacturer is not None:
                 update_fields.append('manufacturer = ?')
                 params.append(manufacturer)
+            if device_type is not None:
+                update_fields.append('device_type = ?')
+                params.append(device_type)
             if ip is not None:
                 update_fields.append('ip = ?')
                 params.append(ip)
@@ -605,6 +710,9 @@ class Database:
             if port is not None:
                 update_fields.append('port = ?')
                 params.append(port)
+            if url is not None:
+                update_fields.append('url = ?')
+                params.append(url)
 
             if not update_fields:
                 conn.close()
@@ -796,6 +904,33 @@ class Database:
 
     # ==================== 截图相关方法 ====================
 
+    def get_devices_with_url(self):
+        """获取有URL的设备列表（供截图功能使用）"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT id, manufacturer, ip, username, port, url FROM devices WHERE url IS NOT NULL AND url != '' ORDER BY id"
+            )
+            result = cursor.fetchall()
+            conn.close()
+
+            devices = []
+            for row in result:
+                devices.append({
+                    "id": row[0],
+                    "manufacturer": row[1],
+                    "ip": row[2],
+                    "username": row[3],
+                    "port": row[4],
+                    "url": row[5]
+                })
+            return devices
+        except Exception as e:
+            print(f"获取带URL设备列表错误: {str(e)}")
+            return []
+
     def add_screenshot_urls(self, urls):
         """批量添加截图URL"""
         try:
@@ -959,10 +1094,51 @@ class Database:
             print(f"获取截图数量错误: {str(e)}")
             return 0
 
+    def clear_screenshot_history(self):
+        """清空截图历史（返回所有文件路径供删除本地文件）"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 先获取所有文件路径
+            cursor.execute('SELECT file_path FROM screenshot_history')
+            file_paths = [row[0] for row in cursor.fetchall()]
+
+            # 清空表
+            cursor.execute('DELETE FROM screenshot_history')
+            conn.commit()
+            conn.close()
+
+            return file_paths
+        except Exception as e:
+            print(f"清空截图历史错误: {str(e)}")
+            return []
+
+    def delete_screenshot_record(self, record_id):
+        """删除单条截图历史（返回文件路径供清理本地文件）"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT file_path FROM screenshot_history WHERE id = ?', (record_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return None
+
+            file_path = row[0]
+            cursor.execute('DELETE FROM screenshot_history WHERE id = ?', (record_id,))
+            conn.commit()
+            conn.close()
+            return file_path
+        except Exception as e:
+            print(f"删除截图记录错误: {str(e)}")
+            return None
+
     # ==================== 截图任务方法 ====================
 
-    def create_screenshot_task(self, name, url_ids):
-        """创建截图任务"""
+    def create_screenshot_task(self, name, device_ids):
+        """创建截图任务（从devices表获取设备URL和IP）"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -974,16 +1150,16 @@ class Database:
             )
             task_id = cursor.lastrowid
 
-            # 从screenshot_urls表获取选中的URL信息
-            for order, url_id in enumerate(url_ids):
+            # 从devices表获取选中设备的URL和IP信息
+            for order, device_id in enumerate(device_ids):
                 cursor.execute(
-                    'SELECT url, ip FROM screenshot_urls WHERE id = ?', (url_id,)
+                    'SELECT ip, url FROM devices WHERE id = ?', (device_id,)
                 )
                 row = cursor.fetchone()
-                if row:
+                if row and row[1]:  # url不为空才添加
                     cursor.execute(
                         'INSERT INTO screenshot_task_devices (task_id, url_id, url, ip, status, screenshot_count, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        (task_id, url_id, row[0], row[1], 'pending', 0, order)
+                        (task_id, device_id, row[1], row[0], 'pending', 0, order)
                     )
 
             conn.commit()
@@ -1180,6 +1356,51 @@ class Database:
             return ip
         except Exception:
             return ''
+    
+    # ==================== 终端连接历史 ====================
+    
+    def add_terminal_history(self, ip, port="22", username="", protocol="ssh"):
+        """添加终端连接历史（去重：同ip+port只保留最新一条）"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        # 先删除旧记录（同ip+port）
+        cursor.execute(
+            "DELETE FROM terminal_history WHERE ip = ? AND port = ?",
+            (ip, port)
+        )
+        # 插入新记录
+        cursor.execute(
+            "INSERT INTO terminal_history (ip, port, username, protocol, connected_at) VALUES (?, ?, ?, ?, ?)",
+            (ip, port, username, protocol, now)
+        )
+        conn.commit()
+        conn.close()
+    
+    def get_terminal_history(self, limit=20):
+        """获取终端连接历史（最近优先）"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, ip, port, username, protocol, connected_at FROM terminal_history ORDER BY id DESC LIMIT ?",
+            (limit,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                "id": r[0], "ip": r[1], "port": r[2],
+                "username": r[3], "protocol": r[4], "connected_at": r[5]
+            }
+            for r in rows
+        ]
+    
+    def clear_terminal_history(self):
+        """清空终端连接历史"""
+        conn = sqlite3.connect(self.db_path)
+        conn.cursor().execute("DELETE FROM terminal_history")
+        conn.commit()
+        conn.close()
 
 
 db = Database()

@@ -19,8 +19,6 @@ FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
 SPEC_FILE = os.path.join(PROJECT_DIR, "patrol_web.spec")
 # 版本信息文件
 VERSION_FILE = os.path.join(PROJECT_DIR, "version_info.py")
-# conda 环境名
-CONDA_ENV = "py3710"
 
 
 def get_version():
@@ -39,7 +37,7 @@ EXE_NAME = f"巡检助手WEBUI_v{APP_VERSION}.exe"
 
 def generate_version_info():
     """生成 version_info.py"""
-    print("\n[0.5/6] 生成版本信息...")
+    print("\n[1/6] 生成版本信息...")
     ver = APP_VERSION
     ver_parts = ver.split(".")
     while len(ver_parts) < 4:
@@ -83,41 +81,9 @@ def generate_version_info():
     return ver
 
 
-def ensure_conda_env():
-    """确保当前运行在指定的 conda 环境中"""
-    print("[0/5] 检查 conda 环境...")
-    current_env = os.environ.get("CONDA_DEFAULT_ENV", "")
-    if current_env == CONDA_ENV:
-        print(f"  ✓ 已在 conda 环境: {CONDA_ENV}")
-        return
-    print(f"  当前环境: {current_env or '无'}，需要: {CONDA_ENV}")
-    print(f"  请先执行: conda activate {CONDA_ENV}")
-    sys.exit(1)
-
-
-def check_backend_deps():
-    """检查并安装后端依赖"""
-    print("\n[0.5/5] 检查后端依赖...")
-    req_file = os.path.join(PROJECT_DIR, "requirements.txt")
-
-    if not os.path.exists(req_file):
-        print("  ⚠ 未找到 requirements.txt，跳过")
-        return
-
-    print("  → 检查后端依赖...")
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-r", req_file],
-        shell=True
-    )
-    if result.returncode != 0:
-        print("  ❌ 后端依赖安装失败")
-        sys.exit(1)
-    print("  ✓ 后端依赖就绪")
-
-
 def check_node_and_build_frontend():
     """构建前端"""
-    print("\n[1/5] 构建前端...")
+    print("\n[2/6] 构建前端...")
     frontend_dist = os.path.join(FRONTEND_DIR, "dist")
 
     # 检查 node 和 npm
@@ -134,13 +100,17 @@ def check_node_and_build_frontend():
         print(f"  ⚠ 使用已有前端文件: {frontend_dist}")
         return
 
-    # 安装依赖（幂等，已装的跳过，缺的自动装）
-    print("  → 检查前端依赖...")
-    result = subprocess.run("npm install", cwd=FRONTEND_DIR, shell=True)
-    if result.returncode != 0:
-        print("  ❌ 前端依赖安装失败")
-        sys.exit(1)
-    print("  ✓ 前端依赖就绪")
+    # 清理 Vite 构建缓存，确保全新构建
+    print("  → 清理前端构建缓存...")
+    vite_cache = os.path.join(FRONTEND_DIR, "node_modules", ".vite")
+    frontend_dist = os.path.join(FRONTEND_DIR, "dist")
+    for d in [vite_cache, frontend_dist]:
+        if os.path.exists(d):
+            try:
+                shutil.rmtree(d)
+                print(f"    ✓ 已清理: {os.path.basename(d)}")
+            except PermissionError:
+                print(f"    ⚠ 跳过被占用目录: {os.path.basename(d)}")
 
     # 构建前端
     print("  → 执行 npm run build...")
@@ -153,7 +123,7 @@ def check_node_and_build_frontend():
 
 def kill_occupying():
     """关闭可能占用 dist/exe 的进程"""
-    print("\n[2/5] 检查并关闭占用进程...")
+    print("\n[3/6] 检查并关闭占用进程...")
     try:
         subprocess.run(
             ['taskkill', '/f', '/im', EXE_NAME],
@@ -167,7 +137,7 @@ def kill_occupying():
 
 def clean_build():
     """清理旧的 build 和 dist 目录"""
-    print("\n[3/5] 清理旧构建文件...")
+    print("\n[4/6] 清理旧构建文件...")
     build_dir = os.path.join(PROJECT_DIR, "build")
     dist_dir = os.path.join(PROJECT_DIR, "dist")
 
@@ -181,7 +151,7 @@ def clean_build():
 
 def run_pyinstaller():
     """执行 PyInstaller 打包"""
-    print("\n[4/5] 开始 PyInstaller 打包...")
+    print("\n[5/6] 开始 PyInstaller 打包...")
     print(f"  Spec 文件: {SPEC_FILE}")
     print(f"  输出文件: {EXE_NAME}")
     result = subprocess.run(
@@ -197,7 +167,7 @@ def run_pyinstaller():
 
 def verify_output():
     """验证输出"""
-    print("\n[5/5] 验证输出...")
+    print("\n[6/6] 验证输出...")
     exe_path = os.path.join(PROJECT_DIR, "dist", EXE_NAME)
     if os.path.exists(exe_path):
         size_mb = os.path.getsize(exe_path) / (1024 * 1024)
@@ -221,13 +191,10 @@ if __name__ == "__main__":
     print(f"  项目目录: {PROJECT_DIR}")
     print(f"  后端目录: {BACKEND_DIR}")
     print(f"  前端目录: {FRONTEND_DIR}")
-    print(f"  Conda 环境: {CONDA_ENV}")
     print("=" * 60 + "\n")
 
     try:
-        ensure_conda_env()
         generate_version_info()
-        check_backend_deps()
         check_node_and_build_frontend()
         kill_occupying()
         clean_build()

@@ -4,6 +4,7 @@
 """
 import os
 import time
+import re
 import asyncio
 import paramiko
 import asyncssh
@@ -11,30 +12,174 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.database import db
 from app.crypto_utils import crypto
 from app.config import settings
+from app.telnet_utils import SimpleTelnet
 
 
 class PatrolService:
     """设备巡检服务类"""
 
     @staticmethod
-    def patrol_single_device(ip, port, username, password, manufacturer, template_name,
-                             append_output_func=None, update_progress_func=None, output_lock=None):
-        """巡检单个设备的核心逻辑
+    def _patrol_via_telnet(ip, port, username, password, manufacturer, device_type, template_name,
+                           append_output_func=None, update_progress_func=None, output_lock=None):
+        """通过 Telnet 巡检单个设备
 
         Args:
             ip: 设备IP
-            port: SSH端口
+            port: Telnet端口（23）
             username: 用户名
             password: 密码
             manufacturer: 设备厂商
             template_name: 命令模板名称
-            append_output_func: 输出函数，接收text参数
-            update_progress_func: 进度更新函数，接收current和total参数
-            output_lock: 线程锁（批量模式下使用）
+            append_output_func: 输出函数
+            update_progress_func: 进度更新函数
+            output_lock: 线程锁
+
+        Returns:
+            tuple: (success, cmd_results, error_msg)
+        """
+        def safe_output(text):
+            if append_output_func:
+                if output_lock:
+                    with output_lock:
+                        append_output_func(text)
+                else:
+                    append_output_func(text)
+
+        cmd_results = []
+        tn = None
+
+        try:
+            safe_output(f"开始 Telnet 登录设备: {ip}:{port}\n")
+            safe_output(f"用户名: {username}\n")
+            safe_output(f"命令模板: {template_name}\n")
+            safe_output(f"设备厂商: {manufacturer}\n")
+            safe_output(f"设备类型: {device_type or '通用'}\n")
+
+            decrypted_password = crypto.decrypt(password) if crypto.is_encrypted(password) else password
+
+            tn = SimpleTelnet(ip, port, timeout=15)
+            tn.connect()
+            safe_output("Telnet 连接成功，等待登录提示...\n")
+
+            # 等待登录提示（缩短timeout加速）
+            login_output = tn.read_until(":", timeout=5)
+            safe_output(f"收到提示: {login_output[-80:]}\n")
+
+            # 发送用户名
+            tn.write(username + "\r\n")
+            safe_output(f"已发送用户名: {username}\n")
+
+            # 等待密码提示
+            pass_prompt = tn.read_until(":", timeout=3)
+            safe_output(f"收到密码提示\n")
+
+            # 发送密码
+            tn.write(decrypted_password + "\r\n")
+            safe_output("已发送密码\n")
+
+            # 等待登录完成，读取欢迎信息（缩短等待）
+            time.sleep(0.3)
+            welcome = tn.read_very_eager()
+            if welcome:
+                safe_output("登录成功！\n")
+
+            # 获取命令提示符
+            tn.write("\r\n")
+            time.sleep(0.2)
+            prompt_data = tn.read_very_eager()
+            lines = prompt_data.strip().split('\n')
+            # 尝试从输出中提取提示符（通常是最后一行非空内容）
+            command_prompt = None
+            for line in reversed(lines):
+                line = line.strip()
+                if line and len(line) < 80 and (line.endswith('>') or line.endswith('#') or line.endswith(']')):
+                    command_prompt = line
+                    break
+            if command_prompt:
+                safe_output(f"获取到命令提示符: {command_prompt}\n")
+
+            cmd_list = db.get_cmd_template(template_name, manufacturer, device_type)
+
+            if not cmd_list:
+                safe_output(f"错误: 未找到厂商 [{manufacturer}] 设备类型 [{device_type}] 在模板 [{template_name}] 中的巡检命令\n")
+                return False, [], f"模板 [{template_name}] 中没有厂商 [{manufacturer}] 设备类型 [{device_type}] 的巡检命令，请检查命令模板配置"
+
+            # 执行前置命令
+            pre_commands = db.get_manufacturer_commands(manufacturer, "pre")
+            for cmd in pre_commands:
+                safe_output(f"执行前置命令: {cmd}\n")
+                tn.write(cmd + "\r\n")
+                time.sleep(0.3)
+                output = tn.read_very_eager()
+
+            # 执行巡检命令
+            for i, cmd in enumerate(cmd_list):
+                safe_output(f"执行命令 {i+1}/{len(cmd_list)}: {cmd}\n")
+                tn.write(cmd + "\r\n")
+                time.sleep(0.8)
+                output = tn.read_very_eager()
+                error = ""
+
+                if output:
+                    # 清理输出：去除命令回显
+                    if cmd in output:
+                        cmd_idx = output.find(cmd)
+                        end_idx = cmd_idx + len(cmd)
+                        while end_idx < len(output) and output[end_idx] in '\r\n':
+                            end_idx += 1
+                        output = output[end_idx:]
+                    # 清理空行
+                    lines_out = output.split('\n')
+                    cleaned = [l.strip() for l in lines_out if l.strip()]
+                    output = '\n'.join(cleaned)
+
+                cmd_results.append((cmd, output, error))
+
+                if update_progress_func:
+                    update_progress_func(i + 1, len(cmd_list))
+
+            # 执行后置命令
+            post_commands = db.get_manufacturer_commands(manufacturer, "post")
+            for cmd in post_commands:
+                safe_output(f"执行后置命令: {cmd}\n")
+                tn.write(cmd + "\r\n")
+                time.sleep(0.3)
+                tn.read_very_eager()
+
+            safe_output("Telnet 巡检完成！\n")
+            return True, cmd_results, ""
+
+        except Exception as e:
+            error_msg = str(e)
+            safe_output(f"Telnet 巡检错误: {error_msg}\n")
+            return False, cmd_results, error_msg
+        finally:
+            if tn:
+                try:
+                    tn.close()
+                except Exception:
+                    pass
+
+    @staticmethod
+    def patrol_single_device(ip, port, username, password, manufacturer, device_type, template_name,
+                             append_output_func=None, update_progress_func=None, output_lock=None):
+        """巡检单个设备的核心逻辑（自动识别SSH/Telnet）
+
+        Args:
+            ip: 设备IP
+            port: 端口（23=Telnet，其他=SSH）
+            ...同原有参数
 
         Returns:
             tuple: (success: bool, results: list, error_msg: str)
         """
+        # 端口23 → 使用 Telnet
+        if int(port) == 23:
+            return PatrolService._patrol_via_telnet(
+                ip, port, username, password, manufacturer, device_type, template_name,
+                append_output_func, update_progress_func, output_lock
+            )
+
         def safe_output(text):
             if append_output_func:
                 if output_lock:
@@ -50,6 +195,7 @@ class PatrolService:
             safe_output(f"用户名: {username}\n")
             safe_output(f"命令模板: {template_name}\n")
             safe_output(f"设备厂商: {manufacturer}\n")
+            safe_output(f"设备类型: {device_type or '通用'}\n")
 
             decrypted_password = crypto.decrypt(password) if crypto.is_encrypted(password) else password
 
@@ -61,7 +207,11 @@ class PatrolService:
             safe_output("登录成功！\n")
             safe_output("开始执行巡检命令...\n")
 
-            cmd_list = db.get_cmd_template(template_name, manufacturer)
+            cmd_list = db.get_cmd_template(template_name, manufacturer, device_type)
+
+            if not cmd_list:
+                safe_output(f"错误: 未找到厂商 [{manufacturer}] 设备类型 [{device_type}] 在模板 [{template_name}] 中的巡检命令\n")
+                return False, [], f"模板 [{template_name}] 中没有厂商 [{manufacturer}] 设备类型 [{device_type}] 的巡检命令，请检查命令模板配置"
 
             try:
                 shell = client.invoke_shell()
@@ -219,7 +369,7 @@ class PatrolService:
             return False, cmd_results, error_msg
 
     @staticmethod
-    async def patrol_single_device_asyncssh(ip, port, username, password, manufacturer, template_name, append_output_func=None):
+    async def patrol_single_device_asyncssh(ip, port, username, password, manufacturer, device_type, template_name, append_output_func=None):
         """巡检单个设备（asyncssh异步版本）
 
         Args:
@@ -245,6 +395,7 @@ class PatrolService:
             safe_output(f"用户名: {username}\n")
             safe_output(f"命令模板: {template_name}\n")
             safe_output(f"设备厂商: {manufacturer}\n")
+            safe_output(f"设备类型: {device_type or '通用'}\n")
 
             decrypted_password = crypto.decrypt(password) if crypto.is_encrypted(password) else password
 
@@ -261,7 +412,11 @@ class PatrolService:
                 safe_output("登录成功！\n")
                 safe_output("开始执行巡检命令...\n")
 
-                cmd_list = db.get_cmd_template(template_name, manufacturer)
+                cmd_list = db.get_cmd_template(template_name, manufacturer, device_type)
+
+                if not cmd_list:
+                    safe_output(f"错误: 未找到厂商 [{manufacturer}] 在模板 [{template_name}] 中的巡检命令\n")
+                    return False, [], f"模板 [{template_name}] 中没有厂商 [{manufacturer}] 的巡检命令，请检查命令模板配置"
 
                 process = await conn.create_process(term_type='xterm', term_size=(80, 24))
                 stdin = process.stdin

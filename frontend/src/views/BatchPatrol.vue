@@ -61,8 +61,9 @@
                   class="device-item"
                 >
                   <el-checkbox :value="device.id" :label="device.id">
-                    <span class="device-ip">{{ device.ip }}</span>
+                    <span class="device-ip">{{ maskText(device.ip, 'ip') }}</span>
                     <el-tag size="small" type="info">{{ device.manufacturer }}</el-tag>
+                    <el-tag v-if="device.device_type" size="small" type="warning">{{ device.device_type }}</el-tag>
                     <span class="device-username">{{ device.username }}</span>
                   </el-checkbox>
                 </div>
@@ -82,7 +83,7 @@
             @click="handleStartPatrol"
           >
             <el-icon><VideoPlay /></el-icon>
-            开始批量巡检
+            创建巡检任务
           </el-button>
         </el-card>
       </el-col>
@@ -194,7 +195,7 @@
     <el-dialog v-model="detailDialogVisible" title="巡检详情" width="70%">
       <div v-if="currentDetail">
         <el-descriptions :column="3" size="small" style="margin-bottom: 16px">
-          <el-descriptions-item label="设备IP">{{ currentDetail.ip }}</el-descriptions-item>
+          <el-descriptions-item label="设备IP">{{ maskText(currentDetail.ip, 'ip') }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <el-tag :type="currentDetail.success ? 'success' : 'danger'" size="small">
               {{ currentDetail.success ? '成功' : '失败' }}
@@ -231,8 +232,10 @@ import { ElMessage } from 'element-plus'
 import { getDeviceList } from '@/api/devices'
 import { getTemplateList } from '@/api/templates'
 import { startBatchPatrol, getBatchStatus } from '@/api/patrol'
+import { useSettings } from '@/composables/useSettings'
 
 const route = useRoute()
+const { maskText } = useSettings()
 
 // 模板列表
 const templateList = ref([])
@@ -497,13 +500,13 @@ const handleStartPatrol = async () => {
       taskId.value = res.data.task_id
       totalDevices.value = res.data.total_devices
       
-      appendLog(`任务创建成功，任务ID: ${res.data.task_id}\n`)
+      appendLog(`任务已创建，任务ID: ${res.data.task_id}\n`)
       appendLog(`共 ${res.data.total_devices} 台设备待巡检\n\n`)
+      appendLog('提示: 请前往「巡检任务」页面点击启动按钮执行巡检\n')
       
-      // 连接WebSocket获取实时日志
-      connectWebSocket(res.data.task_id)
-      // 启动定时轮询作为备份
-      startPollStatus()
+      patrolling.value = false
+      
+      ElMessage.success(`任务已创建，共${res.data.total_devices}台设备`)
     } else {
       patrolling.value = false
       ElMessage.error(res.message || '创建任务失败')
@@ -548,7 +551,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page-container {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .config-card {

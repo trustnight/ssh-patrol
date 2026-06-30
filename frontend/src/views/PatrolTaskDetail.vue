@@ -72,7 +72,7 @@
               <el-tag size="small" :type="device.success ? 'success' : (device.success === false ? 'danger' : 'info')">
                 {{ device.success ? '✓' : (device.success === false ? '✗' : '…') }}
               </el-tag>
-              <span class="device-ip">{{ device.ip }}</span>
+              <span class="device-ip">{{ maskText(device.ip, 'ip') }}</span>
             </div>
             <el-empty v-if="deviceResults.length === 0" description="暂无设备" :image-size="60" />
           </div>
@@ -138,9 +138,11 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getBatchStatus, getPatrolResult, getPatrolHistory, openPatrolFolder } from '@/api/patrol'
+import { useSettings } from '@/composables/useSettings'
 
 const route = useRoute()
 const router = useRouter()
+const { maskText } = useSettings()
 
 // ===== 拖拽调整宽度 =====
 const leftWidth = ref(200)
@@ -479,7 +481,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page-container {
-  height: calc(100vh - 120px);
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }

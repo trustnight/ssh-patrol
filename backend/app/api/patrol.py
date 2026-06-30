@@ -31,6 +31,7 @@ def _get_device_info_from_db(device_id):
         return None
     return {
         "manufacturer": device["manufacturer"],
+        "device_type": device.get("device_type", ""),
         "ip": device["ip"],
         "username": device["username"],
         "password": device["password"],
@@ -57,7 +58,13 @@ def _run_batch_patrol(task_id, devices, template_name, max_workers):
 
         async def patrol_device(device_info, device_index, total_devices):
             try:
+                # 检查任务是否已被取消
+                if task_manager.is_cancelled(task_id):
+                    append_log_safe(f"\n[{device_info.get('ip', '?')}] 任务已取消，跳过\n")
+                    return None
+
                 manufacturer = device_info.get("manufacturer", "Hillstone")
+                device_type = device_info.get("device_type", "")
                 ip = device_info.get("ip", "")
                 username = device_info.get("username", "")
                 password = device_info.get("password", "")
@@ -76,15 +83,33 @@ def _run_batch_patrol(task_id, devices, template_name, max_workers):
                                 prefixed_lines.append("")
                         append_log_safe('\n'.join(prefixed_lines))
 
-                    success, cmd_results, error_msg = await patrol_service.patrol_single_device_asyncssh(
-                        ip=ip,
-                        port=port,
-                        username=username,
-                        password=password,
-                        manufacturer=manufacturer,
-                        template_name=template_name,
-                        append_output_func=device_output_func
-                    )
+                    # 端口 23 → Telnet，走同步路径（patrol_single_device_asyncssh 不支持 Telnet）
+                    if port == 23:
+                        loop = asyncio.get_running_loop()
+                        success, cmd_results, error_msg = await loop.run_in_executor(
+                            None,
+                            lambda: patrol_service.patrol_single_device(
+                                ip=ip,
+                                port=port,
+                                username=username,
+                                password=password,
+                                manufacturer=manufacturer,
+                                device_type=device_type,
+                                template_name=template_name,
+                                append_output_func=device_output_func
+                            )
+                        )
+                    else:
+                        success, cmd_results, error_msg = await patrol_service.patrol_single_device_asyncssh(
+                            ip=ip,
+                            port=port,
+                            username=username,
+                            password=password,
+                            manufacturer=manufacturer,
+                            device_type=device_type,
+                            template_name=template_name,
+                            append_output_func=device_output_func
+                        )
 
                     log_path = ""
                     if cmd_results:
@@ -143,7 +168,18 @@ def _run_batch_patrol(task_id, devices, template_name, max_workers):
             patrol_device(device, idx + 1, len(devices))
             for idx, device in enumerate(devices)
         ]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 检测是否被取消
+        if task_manager.is_cancelled(task_id):
+            task = task_manager.get_task(task_id)
+            success_count = task["success_count"] if task else 0
+            fail_count = task["fail_count"] if task else 0
+            append_log_safe("\n========== 巡检已取消 ==========\n")
+            append_log_safe(f"已完成: {success_count} 成功, {fail_count} 失败\n")
+            append_log_safe("============================\n")
+            task_manager.complete_task(task_id, "cancelled")
+            return
 
         task = task_manager.get_task(task_id)
         success_count = task["success_count"] if task else 0
@@ -285,37 +321,72 @@ def batch_patrol_start(request: BatchPatrolStartRequest):
         task_manager.create_task(
             task_id=task_id,
             total_devices=len(devices),
-            template_name=request.template_name
+            template_name=request.template_name,
+            devices=devices,
+            max_workers=request.max_workers
         )
 
-        # 立即写入数据库记录，确保任务列表马上能看到
-        for device in devices:
-            db.add_patrol_record(
-                task_id=task_id,
-                ip=device.get("ip", ""),
-                manufacturer=device.get("manufacturer", ""),
-                template_name=request.template_name,
-                success=False,
-                log_path=""
-            )
+        return ApiResponse(
+            code=0,
+            message="任务已创建，请点击启动按钮开始执行",
+            data={
+                "task_id": task_id,
+                "total_devices": len(devices),
+                "status": "pending"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建巡检任务失败: {str(e)}")
 
+
+@router.post("/batch/run/{task_id}", response_model=ApiResponse, summary="启动已创建的批量巡检任务")
+def batch_patrol_run(task_id: str):
+    """启动已创建的批量巡检任务
+
+    Args:
+        task_id: 任务ID
+
+    Returns:
+        启动结果
+    """
+    try:
+        task_data = task_manager.get_task_devices(task_id)
+        if not task_data:
+            return ApiResponse(code=1, message="任务不存在", data=None)
+
+        devices = task_data.get("devices", [])
+        template_name = task_data.get("template_name", "")
+        max_workers = task_data.get("max_workers", 5)
+
+        if not devices:
+            return ApiResponse(code=1, message="任务中没有设备", data=None)
+
+        # 检查任务状态，避免重复启动
+        task = task_manager.get_task(task_id)
+        if task and task.get("status") == "running":
+            return ApiResponse(code=1, message="任务已在运行中", data=None)
+
+        # 更新状态为 running
+        task_manager.update_task_status(task_id, status="running")
+
+        # 后台启动巡检
         thread = threading.Thread(
             target=_run_batch_patrol,
-            args=(task_id, devices, request.template_name, request.max_workers),
+            args=(task_id, devices, template_name, max_workers),
             daemon=True
         )
         thread.start()
 
         return ApiResponse(
             code=0,
-            message="批量巡检已开始",
+            message="任务已启动",
             data={
                 "task_id": task_id,
                 "total_devices": len(devices)
             }
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"开始批量巡检失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 
 @router.get("/batch/status/{task_id}", response_model=ApiResponse, summary="查询批量巡检状态")
@@ -360,8 +431,8 @@ def get_running_tasks():
     """获取内存中正在运行/等待的巡检任务"""
     try:
         tasks = task_manager.get_all_tasks()
-        # 返回未完成的任务（pending/running/failed 都算活跃任务）
-        running = [t for t in tasks if t.get("status") not in ("completed",)]
+        # 返回未完成的任务（pending/running/failed/cancelling 都算活跃任务）
+        running = [t for t in tasks if t.get("status") not in ("completed", "cancelled")]
         return ApiResponse(
             code=0,
             message="success",
@@ -369,6 +440,29 @@ def get_running_tasks():
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取任务列表失败: {str(e)}")
+
+
+@router.post("/batch/stop/{task_id}", response_model=ApiResponse, summary="停止批量巡检")
+def stop_batch_patrol(task_id: str):
+    """停止一个正在运行的批量巡检任务
+
+    已完成的设备结果会保留，未开始的设备会被跳过。
+    """
+    try:
+        ok = task_manager.cancel_task(task_id)
+        if not ok:
+            return ApiResponse(
+                code=1,
+                message="任务不存在或已完成/已取消",
+                data=None
+            )
+        return ApiResponse(
+            code=0,
+            message="任务已标记为取消，运行中的设备完成后将停止",
+            data={"task_id": task_id}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"停止任务失败: {str(e)}")
 
 
 @router.get("/history", response_model=ApiResponse, summary="巡检历史列表")

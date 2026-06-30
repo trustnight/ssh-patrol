@@ -45,8 +45,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="180" />
-        <el-table-column label="操作" width="120" align="center" fixed="right">
+        <el-table-column label="操作" width="180" align="center" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" link @click="handleStartTask(row)" v-if="row.status === 'pending' || row.status === 'completed' || row.status === 'cancelled' || row.status === 'failed'">
+              启动任务
+            </el-button>
+            <el-button type="danger" link @click="handleStopTask(row)" v-if="row.status === 'running'">
+              停止任务
+            </el-button>
             <el-button type="primary" link @click="handleViewDetail(row)">
               查看详情
             </el-button>
@@ -91,7 +97,7 @@
             <el-option
               v-for="dev in deviceList"
               :key="dev.id"
-              :label="`${dev.ip} (${dev.manufacturer})`"
+              :label="`${maskText(dev.ip, 'ip')} (${dev.manufacturer})`"
               :value="dev.id"
             />
           </el-select>
@@ -117,7 +123,7 @@
               <el-option
                 v-for="dev in deviceList"
                 :key="dev.id"
-                :label="`${dev.ip} (${dev.manufacturer})`"
+                :label="`${maskText(dev.ip, 'ip')} (${dev.manufacturer})`"
                 :value="dev.id"
               />
             </el-select>
@@ -130,7 +136,7 @@
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="handleSubmit">
-          开始巡检
+          创建任务
         </el-button>
       </template>
     </el-dialog>
@@ -143,9 +149,11 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getTemplateList } from '@/api/templates'
 import { getDeviceList } from '@/api/devices'
-import { startBatchPatrol, getPatrolHistory, getRunningTasks, batchDeleteTasks } from '@/api/patrol'
+import { startBatchPatrol, getPatrolHistory, getRunningTasks, batchDeleteTasks, stopPatrolTask, startPatrolTask } from '@/api/patrol'
+import { useSettings } from '@/composables/useSettings'
 
 const router = useRouter()
+const { maskText } = useSettings()
 
 const loading = ref(false)
 const tableData = ref([])
@@ -169,6 +177,8 @@ const statusText = (status) => {
   const map = {
     pending: '等待中',
     running: '运行中',
+    cancelling: '取消中',
+    cancelled: '已取消',
     completed: '已完成',
     failed: '失败'
   }
@@ -179,10 +189,46 @@ const statusType = (status) => {
   const map = {
     pending: 'info',
     running: 'warning',
+    cancelling: 'danger',
+    cancelled: 'info',
     completed: 'success',
     failed: 'danger'
   }
   return map[status] || 'info'
+}
+
+const handleStopTask = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要停止任务 ${row.task_id.slice(0, 8)}... 吗？已完成的设备结果会保留。`,
+      '停止任务',
+      { confirmButtonText: '确定停止', cancelButtonText: '取消', type: 'warning' }
+    )
+    await stopPatrolTask(row.task_id)
+    ElMessage.success('任务已停止')
+    loadData()
+  } catch (e) {
+    if (e !== 'cancel') {
+      console.error('停止任务失败:', e)
+    }
+  }
+}
+
+const handleStartTask = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要启动任务 ${row.task_id.slice(0, 8)}... 吗？`,
+      '启动任务',
+      { confirmButtonText: '确定启动', cancelButtonText: '取消', type: 'info' }
+    )
+    await startPatrolTask(row.task_id)
+    ElMessage.success('任务已启动，即将跳转到巡检页面...')
+    router.push(`/patrol/${row.task_id}`)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('启动任务失败: ' + (e.message || e))
+    }
+  }
 }
 
 const loadData = async () => {
@@ -337,7 +383,7 @@ const handleSubmit = async () => {
     })
 
     if (res.code === 0) {
-      ElMessage.success('任务已启动')
+      ElMessage.success('任务已创建，请在列表中点击启动')
       dialogVisible.value = false
       setTimeout(() => {
         loadData()
@@ -361,7 +407,10 @@ onMounted(() => {
 
 <style scoped>
 .page-container {
-  min-height: calc(100vh - 120px);
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .card-header {

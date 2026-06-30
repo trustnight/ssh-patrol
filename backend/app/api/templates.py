@@ -30,24 +30,26 @@ def get_template_list():
 
 
 @router.get("/commands", response_model=ApiResponse, summary="获取模板命令")
-def get_template_commands(template_name: str, manufacturer: str):
+def get_template_commands(template_name: str, manufacturer: str, device_type: str = ''):
     """获取指定模板和厂商的命令列表
 
     Args:
         template_name: 模板名称
         manufacturer: 设备厂商
+        device_type: 设备类型（FW/SW/RT/IPS/WAF/DDOS/WOC/other）
 
     Returns:
         模板命令列表
     """
     try:
-        commands = db.get_template_commands(template_name, manufacturer)
+        commands = db.get_template_commands(template_name, manufacturer, device_type or '')
         return ApiResponse(
             code=0,
             message="success",
             data={
                 "template_name": template_name,
                 "manufacturer": manufacturer,
+                "device_type": device_type or '',
                 "commands": commands
             }
         )
@@ -56,17 +58,18 @@ def get_template_commands(template_name: str, manufacturer: str):
 
 
 @router.get("/manufacturers", response_model=ApiResponse, summary="获取模板支持的厂商列表")
-def get_template_manufacturers(template_name: str):
+def get_template_manufacturers(template_name: str, device_type: str = ''):
     """获取指定模板支持的厂商列表
 
     Args:
         template_name: 模板名称
+        device_type: 设备类型（可选）
 
     Returns:
         厂商列表
     """
     try:
-        manufacturers = db.get_template_manufacturers(template_name)
+        manufacturers = db.get_template_manufacturers(template_name, device_type or '')
         return ApiResponse(
             code=0,
             message="success",
@@ -90,7 +93,8 @@ def save_custom_template(request: SaveCustomTemplateRequest):
         success = db.save_custom_template(
             request.template_name,
             request.manufacturer,
-            request.commands
+            request.commands,
+            request.device_type or ''
         )
         if success:
             return ApiResponse(

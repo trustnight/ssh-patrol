@@ -76,3 +76,19 @@ export function batchDeleteTasks(taskIds) {
     data: { task_ids: taskIds }
   })
 }
+
+// 停止运行的巡检任务
+export function stopPatrolTask(taskId) {
+  return request({
+    url: `/patrol/batch/stop/${taskId}`,
+    method: 'post'
+  })
+}
+
+// 启动已创建的巡检任务
+export function startPatrolTask(taskId) {
+  return request({
+    url: `/patrol/batch/run/${taskId}`,
+    method: 'post'
+  })
+}

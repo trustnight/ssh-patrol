@@ -30,9 +30,18 @@ def get_resource_path(relative_path):
 
 
 def open_browser(host, port):
-    """延迟打开浏览器"""
-    time.sleep(1.5)
+    """轮询等待服务器就绪后打开浏览器"""
+    import urllib.request
     url = f"http://{host}:{port}"
+    # 轮询 /api/health，最多等 30 秒
+    for _ in range(60):
+        try:
+            resp = urllib.request.urlopen(f"{url}/api/health", timeout=1)
+            if resp.status == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
     try:
         webbrowser.open(url)
         print(f"[启动] 已自动打开浏览器: {url}")
@@ -55,14 +64,26 @@ def main():
     print("=" * 50)
     print()
 
-    # 自动打开浏览器（可通过环境变量禁用，用于开发模式）
+    # PyInstaller 打包后 → 系统托盘模式（不弹 CMD）
+    if getattr(sys, 'frozen', False):
+        try:
+            from app.tray_app import start_tray, setup_logging, log_file
+        except ImportError:
+            print("[启动] pystray 模块不可用，回退到直接运行模式")
+            uvicorn.run(app, host=settings.HOST, port=settings.PORT, log_level="info")
+            return
+        setup_logging()
+        print(f"[托盘] 日志文件: {log_file}")
+        start_tray(app, settings.HOST, settings.PORT)
+        return
+
+    # 开发模式 → 正常启动 uvicorn
     auto_open = settings.AUTO_OPEN_BROWSER and os.environ.get("DISABLE_AUTO_OPEN") != "1"
     if auto_open:
         t = threading.Thread(target=open_browser, args=(settings.HOST, settings.PORT))
         t.daemon = True
         t.start()
 
-    # 启动 uvicorn
     uvicorn.run(
         app,
         host=settings.HOST,

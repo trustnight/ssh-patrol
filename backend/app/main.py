@@ -13,6 +13,7 @@ from app.api.templates import router as templates_router
 from app.api.devices import router as devices_router
 from app.api.patrol import router as patrol_router
 from app.api.screenshot import router as screenshot_router
+from app.api.terminal import router as terminal_router
 from app.websocket.ssh_terminal import router as ssh_ws_router
 from app.websocket.patrol_log import router as patrol_ws_router
 from app.services.task_manager import task_manager
@@ -79,9 +80,6 @@ def create_app():
         """应用启动时初始化数据库"""
         db.init_db()
         task_manager.start_cleanup_scheduler()
-        # 生成设备导入模板文件到exe所在目录
-        from app.api.devices import ensure_template_file
-        ensure_template_file()
 
     @app.get("/api/health", tags=["健康检查"])
     async def health_check():
@@ -93,6 +91,7 @@ def create_app():
     app.include_router(devices_router)
     app.include_router(patrol_router)
     app.include_router(screenshot_router)
+    app.include_router(terminal_router)
 
     # 注册 WebSocket 路由
     app.include_router(ssh_ws_router)

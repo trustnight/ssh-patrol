@@ -28,6 +28,8 @@ pynput==1.7.6
 
 # 全屏截图
 Pillow>=9.0.0
+# pystray 0.17.x 支持 Python 3.6+，0.19+ 需要 Python 3.8+
+pystray>=0.17.0,<0.19.0
 
 # 打包工具
 pyinstaller==5.13.2

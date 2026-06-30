@@ -45,6 +45,7 @@ version_info.py
 temp/
 test/
 models/
+run_dev/
 
 # Windows
 Thumbs.db

@@ -16,7 +16,7 @@ from app.models.schemas import (
 )
 from app.database import db
 from app.crypto_utils import crypto
-from app.config import settings, get_exe_dir
+from app.config import settings, get_data_dir
 
 router = APIRouter(prefix="/api/devices", tags=["设备管理"])
 
@@ -26,19 +26,22 @@ TEMPLATE_FILENAME = "设备导入模板.csv"
 
 def get_template_path():
     """获取设备导入模板文件路径"""
-    return os.path.join(get_exe_dir(), TEMPLATE_FILENAME)
+    return os.path.join(get_data_dir(), TEMPLATE_FILENAME)
 
 
 def ensure_template_file():
     """生成/刷新设备导入模板（从数据库读取设备，密码保持加密状态）"""
     template_path = get_template_path()
-    devices = db.get_devices()  # 含加密密码
-    header = "manufacturer,ip,username,password,port"
+    devices = db.get_devices()  # 含加密密码，按sort_order排序
+    header = "order,manufacturer,device_type,ip,username,password,port,url"
 
     if devices:
         rows = [header]
         for d in devices:
-            rows.append(f"{d['manufacturer']},{d['ip']},{d['username']},{d['password']},{d['port']}")
+            order_val = d.get('sort_order', d.get('id', 0))
+            url_val = d.get('url', '') or ''
+            dt_val = d.get('device_type', '') or ''
+            rows.append(f"{order_val},{d['manufacturer']},{dt_val},{d['ip']},{d['username']},{d['password']},{d['port']},{url_val}")
         content = "\n".join(rows)
     else:
         # 没有设备时生成示例模板
@@ -46,12 +49,15 @@ def ensure_template_file():
         pwd2 = crypto.encrypt("password456")
         content = (
             f"{header}\n"
-            f"Hillstone,192.168.1.1,admin,{pwd1},22\n"
-            f"Huawei,192.168.1.2,admin,{pwd2},22\n"
+            f"1,Hillstone,FW,192.168.1.1,admin,{pwd1},22,https://192.168.1.1:8588\n"
+            f"2,Huawei,RT,192.168.1.2,admin,{pwd2},22,\n"
         )
 
-    with open(template_path, "w", encoding="utf-8-sig") as f:
-        f.write(content)
+    try:
+        with open(template_path, "w", encoding="utf-8-sig") as f:
+            f.write(content)
+    except PermissionError:
+        print(f"⚠️ 无法写入模板文件（可能正被 Excel 打开）: {template_path}")
 
 
 class BatchDeleteDevicesRequest(BaseModel):
@@ -164,24 +170,27 @@ def add_device(request: DeviceCreate):
         if not crypto.is_encrypted(password):
             password = crypto.encrypt(password)
 
-        device_id = db.add_device(
+        device_id, action = db.add_device(
             manufacturer=request.manufacturer,
             ip=request.ip,
             username=request.username,
             password=password,
-            port=request.port
+            port=request.port,
+            url=request.url or '',
+            sort_order=request.sort_order or 0,
+            device_type=request.device_type or ''
         )
         if device_id:
+            if action == 'update':
+                return ApiResponse(
+                    code=0,
+                    message=f"设备已更新: {request.ip}（厂商/用户名/密码/端口/URL 已覆盖）",
+                    data={"id": device_id, "updated": True}
+                )
             return ApiResponse(
                 code=0,
                 message="设备添加成功",
-                data={"id": device_id}
-            )
-        elif device_id is None and db.device_exists(request.ip):
-            return ApiResponse(
-                code=2,
-                message=f"设备已存在: {request.ip}",
-                data={"duplicate": True}
+                data={"id": device_id, "updated": False}
             )
         else:
             return ApiResponse(
@@ -211,11 +220,14 @@ def update_device(device_id: int, request: DeviceUpdate):
 
         success = db.update_device(
             device_id=device_id,
+            sort_order=request.sort_order,
             manufacturer=request.manufacturer,
             ip=request.ip,
             username=request.username,
             password=password,
-            port=request.port
+            port=request.port,
+            url=request.url,
+            device_type=request.device_type
         )
         if success:
             return ApiResponse(

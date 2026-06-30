@@ -27,13 +27,16 @@ class TaskManager:
         self._cleanup_interval = 3600
         self._task_expire_time = 86400
 
-    def create_task(self, task_id: str, total_devices: int, template_name: str) -> dict:
+    def create_task(self, task_id: str, total_devices: int, template_name: str,
+                     devices: list = None, max_workers: int = 5) -> dict:
         """创建新的巡检任务
 
         Args:
             task_id: 任务ID
             total_devices: 总设备数
             template_name: 模板名称
+            devices: 设备信息列表（用于延迟启动）
+            max_workers: 最大并发数
 
         Returns:
             任务信息字典
@@ -48,6 +51,9 @@ class TaskManager:
                 "progress": 0,
                 "results": [],
                 "template_name": template_name,
+                "devices": devices or [],
+                "max_workers": max_workers,
+                "cancel_flag": False,
                 "created_at": time.time(),
                 "updated_at": time.time()
             }
@@ -56,6 +62,22 @@ class TaskManager:
             self._log_callbacks[task_id] = []
             logger.info(f"创建巡检任务: {task_id}, 设备数: {total_devices}")
             return task.copy()
+
+    def get_task_devices(self, task_id: str) -> Optional[dict]:
+        """获取任务的设备和配置信息（用于延迟启动）
+
+        Returns:
+            dict with keys: devices, template_name, max_workers, 或 None
+        """
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return None
+            return {
+                "devices": task.get("devices", []),
+                "template_name": task.get("template_name", ""),
+                "max_workers": task.get("max_workers", 5)
+            }
 
     def update_task_status(self, task_id: str, **kwargs) -> Optional[dict]:
         """更新任务状态
@@ -231,6 +253,44 @@ class TaskManager:
         """
         with self._lock:
             return [task.copy() for task in self._tasks.values()]
+
+    def cancel_task(self, task_id: str) -> bool:
+        """取消一个正在运行的巡检任务
+
+        设置 cancelled 标记，正在执行的设备巡检会检测到并跳过后续设备。
+
+        Args:
+            task_id: 任务ID
+
+        Returns:
+            是否成功标记为取消
+        """
+        with self._lock:
+            if task_id not in self._tasks:
+                return False
+            task = self._tasks[task_id]
+            if task.get("status") in ("completed", "cancelled"):
+                return False
+            task["cancel_flag"] = True
+            task["status"] = "cancelling"
+            task["updated_at"] = time.time()
+            logger.info(f"任务已标记为取消: {task_id}")
+            return True
+
+    def is_cancelled(self, task_id: str) -> bool:
+        """检查任务是否已被取消
+
+        Args:
+            task_id: 任务ID
+
+        Returns:
+            是否已取消
+        """
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return False
+            return task.get("cancel_flag", False)
 
 
 task_manager = TaskManager()

@@ -37,6 +37,23 @@ def get_resource_dir():
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def get_data_dir():
+    """获取数据存储目录（DB、日志、截图、模板等运行时产出）
+
+    优先级：
+    1. 环境变量 PATROL_DEV_OUTPUT_DIR → 开发模式 run_dev.py 设置，指向 run_dev/
+    2. PyInstaller 打包 → exe 所在目录
+    3. 直接运行 → 项目根目录
+
+    Returns:
+        数据存储目录的绝对路径
+    """
+    dev_dir = os.environ.get("PATROL_DEV_OUTPUT_DIR", "")
+    if dev_dir:
+        return dev_dir
+    return get_exe_dir()
+
+
 class Settings:
     """应用配置类"""
 
@@ -44,7 +61,7 @@ class Settings:
     APP_NAME = "巡检助手 WEBUI"
 
     # 应用版本
-    APP_VERSION = "1.0.0"
+    APP_VERSION = "1.0.2"
 
     # 调试模式
     DEBUG = False
@@ -58,11 +75,14 @@ class Settings:
     # 启动后自动打开浏览器
     AUTO_OPEN_BROWSER = True
 
-    # 数据库文件路径（放在exe同目录，持久化存储）
-    DB_PATH = os.path.join(get_exe_dir(), "patrol.db")
+    # 数据库文件路径（放在数据目录下）
+    DB_PATH = os.path.join(get_data_dir(), "patrol.db")
 
-    # 日志目录（放在exe同目录，持久化存储）
-    LOG_DIR = os.path.join(get_exe_dir(), "log")
+    # 日志目录（放在数据目录下）
+    LOG_DIR = os.path.join(get_data_dir(), "log")
+
+    # 截图目录 key，供外部使用
+    SCREENSHOT_DIR = os.path.join(get_data_dir(), "screen")
 
     # 前端静态文件目录
     STATIC_DIR = os.path.join(get_resource_dir(), "web", "dist")

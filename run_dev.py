@@ -15,7 +15,10 @@ import time
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.join(SCRIPT_DIR, "backend")
 FRONTEND_DIR = os.path.join(SCRIPT_DIR, "frontend")
-CONDA_ENV = "py3710"
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "run_dev")
+
+# 确保输出目录存在
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # 子进程列表
 child_processes = []
@@ -53,44 +56,11 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
-def ensure_conda_env():
-    """检查并确保在正确的 conda 环境中"""
-    current_env = os.environ.get("CONDA_DEFAULT_ENV", "")
-
-    if current_env == CONDA_ENV:
-        return True
-
-    print(f"⚠️  当前环境: {current_env or '无'}，需要: {CONDA_ENV}")
-    print(f"   请先执行: conda activate {CONDA_ENV}")
-    print(f"   然后再运行: python {os.path.basename(__file__)}")
-    return False
-
-
-def check_backend_deps():
-    """检查并安装后端依赖"""
-    python = get_python()
-    req_file = os.path.join(SCRIPT_DIR, "requirements.txt")
-
-    if not os.path.exists(req_file):
-        print("  ⚠ 未找到 requirements.txt，跳过依赖检查")
-        return True
-
-    # 直接 pip install（幂等，已装的秒过，缺的自动装）
-    print("  → 检查后端依赖...")
-    result = subprocess.run(
-        [python, "-m", "pip", "install", "-r", req_file],
-        shell=True
-    )
-    if result.returncode != 0:
-        print("  ❌ 后端依赖安装失败")
-        return False
-    print("  ✓ 后端依赖就绪")
-
-    return True
-
-
 def start_backend():
     """启动后端 FastAPI 服务"""
+    # 日志文件
+    backend_log = os.path.join(OUTPUT_DIR, "backend.log")
+
     print("\n" + "=" * 50)
     print("  [后端] 启动 FastAPI 服务...")
     print("=" * 50)
@@ -99,6 +69,7 @@ def start_backend():
     backend_script = os.path.join(BACKEND_DIR, "run.py")
     print(f"   后端地址: http://127.0.0.1:8000")
     print(f"   API文档:  http://127.0.0.1:8000/docs")
+    print(f"   日志文件:  {backend_log}")
     print()
 
     # 清理旧缓存
@@ -110,42 +81,24 @@ def start_backend():
 
     env = os.environ.copy()
     env["DISABLE_AUTO_OPEN"] = "1"
-    
+    env["PATROL_DEV_OUTPUT_DIR"] = OUTPUT_DIR   # 所有运行时产出重定向到 run_dev/
+
+    # 打开日志文件用于写入
+    log_fp = open(backend_log, "w", encoding="utf-8")
+
     # 使用 Popen 启动，以便能控制子进程
     proc = subprocess.Popen(
         [python, backend_script],
         cwd=BACKEND_DIR,
         env=env,
+        stdout=log_fp,
+        stderr=subprocess.STDOUT,
         # Windows 下创建新进程组，便于终止
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
     )
+    proc._log_fp = log_fp  # 保存引用，防止被 GC
     child_processes.append(proc)
     return proc
-
-
-def check_frontend_deps():
-    """检查并安装前端依赖"""
-    # 检查 npm
-    try:
-        subprocess.run("npm --version", capture_output=True, check=True, shell=True)
-    except Exception:
-        print("  ⚠ 未找到 npm，跳过前端依赖检查")
-        return False
-
-    package_json = os.path.join(FRONTEND_DIR, "package.json")
-    if not os.path.exists(package_json):
-        print("  ⚠ 未找到 package.json，跳过")
-        return False
-
-    # 直接 npm install（幂等，已安装的包秒过，缺的自动装）
-    print("  → 检查前端依赖...")
-    result = subprocess.run("npm install", cwd=FRONTEND_DIR, shell=True)
-    if result.returncode != 0:
-        print("  ❌ 前端依赖安装失败")
-        return False
-    print("  ✓ 前端依赖就绪")
-
-    return True
 
 
 def clean_frontend_cache():
@@ -157,28 +110,39 @@ def clean_frontend_cache():
     ]
     for d in cache_dirs:
         if os.path.exists(d):
-            shutil.rmtree(d)
-            print(f"  ✓ 已清理缓存: {os.path.basename(d)}")
+            try:
+                shutil.rmtree(d)
+                print(f"  ✓ 已清理缓存: {os.path.basename(d)}")
+            except PermissionError:
+                print(f"  ⚠ 缓存目录被占用，跳过: {os.path.basename(d)}")
 
 
 def start_frontend():
     """启动前端开发服务器"""
+    frontend_log = os.path.join(OUTPUT_DIR, "frontend.log")
+
     print("\n" + "=" * 50)
     print("  [前端] 启动 Vite 开发服务器...")
     clean_frontend_cache()
     print("=" * 50)
 
     print(f"   前端地址: http://localhost:5173")
+    print(f"   日志文件:  {frontend_log}")
     print(f"   按 Ctrl+C 停止所有服务")
     print()
+
+    log_fp = open(frontend_log, "w", encoding="utf-8")
 
     # 使用 Popen 启动，以便能控制子进程
     proc = subprocess.Popen(
         "npm run dev",
         cwd=FRONTEND_DIR,
         shell=True,
+        stdout=log_fp,
+        stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
     )
+    proc._log_fp = log_fp
     child_processes.append(proc)
     return proc
 
@@ -194,12 +158,14 @@ def main():
     print("  巡检助手 WEBUI - 开发模式")
     print("=" * 50)
     print(f"  项目目录: {SCRIPT_DIR}")
-    print(f"  Conda 环境: {CONDA_ENV}")
+    print(f"  数据目录: {OUTPUT_DIR}")
+    print(f"    ├─ patrol.db    数据库")
+    print(f"    ├─ log/         巡检日志")
+    print(f"    ├─ screen/      截图文件")
+    print(f"    ├─ backend.log  后端日志")
+    print(f"    └─ frontend.log 前端日志")
     print("=" * 50)
 
-    # 检查 conda 环境
-    if not ensure_conda_env():
-        sys.exit(1)
     if not os.path.exists(FRONTEND_DIR):
         print(f"❌ 前端目录不存在: {FRONTEND_DIR}")
         sys.exit(1)
@@ -213,17 +179,6 @@ def main():
     print("   2. 前端 Vite 开发服务器 (端口 5173)")
     print("\n🌐 访问地址: http://localhost:5173")
     print("   API文档:    http://localhost:8000/docs")
-    print()
-
-    # 检查后端依赖
-    print("🔍 检查后端依赖...")
-    if not check_backend_deps():
-        sys.exit(1)
-
-    # 检查前端依赖
-    print("🔍 检查前端依赖...")
-    if not check_frontend_deps():
-        sys.exit(1)
     print()
 
     # 启动后端

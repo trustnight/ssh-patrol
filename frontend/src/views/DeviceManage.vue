@@ -75,19 +75,35 @@
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column prop="sort_order" label="序号" width="70" />
         <el-table-column prop="manufacturer" label="厂商" width="120">
           <template #default="{ row }">
             <el-tag size="small">{{ row.manufacturer }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="device_type" label="设备类型" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.device_type" size="small" type="warning">{{ row.device_type }}</el-tag>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="ip" label="IP地址" width="160">
           <template #default="{ row }">
-            <span class="ip-text">{{ row.ip }}</span>
+            <span class="ip-text">{{ maskText(row.ip, 'ip') }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="port" label="端口" width="100" />
-        <el-table-column prop="username" label="用户名" width="140" />
+        <el-table-column prop="url" label="Web管理URL" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.url">{{ maskText(row.url, 'url') }}</span>
+            <span v-else class="text-muted">未配置</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="username" label="用户名" width="140">
+          <template #default="{ row }">
+            {{ maskText(row.username, 'username') }}
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="180">
           <template #default="{ row }">
             {{ row.created_at || '-' }}
@@ -142,6 +158,13 @@
         :rules="formRules"
         label-width="80px"
       >
+        <el-form-item label="序号" prop="sort_order">
+          <el-input-number
+            v-model="deviceForm.sort_order"
+            :min="0"
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item label="厂商" prop="manufacturer">
           <el-select v-model="deviceForm.manufacturer" style="width: 100%">
             <el-option label="Hillstone" value="Hillstone" />
@@ -149,6 +172,18 @@
             <el-option label="Cisco" value="Cisco" />
             <el-option label="H3C" value="H3C" />
             <el-option label="其他" value="Other" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="设备类型">
+          <el-select v-model="deviceForm.device_type" style="width: 100%" placeholder="请选择设备类型">
+            <el-option label="FW" value="FW" />
+            <el-option label="SW" value="SW" />
+            <el-option label="RT" value="RT" />
+            <el-option label="IPS" value="IPS" />
+            <el-option label="WAF" value="WAF" />
+            <el-option label="DDOS" value="DDOS" />
+            <el-option label="WOC" value="WOC" />
+            <el-option label="other" value="other" />
           </el-select>
         </el-form-item>
         <el-form-item label="IP地址" prop="ip">
@@ -172,6 +207,9 @@
             placeholder="请输入密码"
             show-password
           />
+        </el-form-item>
+        <el-form-item label="Web管理URL" prop="url">
+          <el-input v-model="deviceForm.url" placeholder="如：https://192.168.1.1:8588" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -202,18 +240,21 @@
         </div>
         <template #tip>
           <div class="el-upload__tip">
-            CSV格式：manufacturer,ip,username,password,port<br>
-            示例：Hillstone,192.168.1.1,admin,password123,22
+            CSV格式：order,manufacturer,device_type,ip,username,password,port,url<br>
+            示例：1,Hillstone,FW,192.168.1.1,admin,password123,22,https://192.168.1.1:8588
           </div>
         </template>
       </el-upload>
       <div v-if="importPreview.length > 0" class="import-preview">
         <div class="preview-header">预览 ({{ importPreview.length }} 台设备)：</div>
         <el-table :data="importPreview" size="small" max-height="200">
+          <el-table-column prop="sort_order" label="序号" width="60" />
           <el-table-column prop="manufacturer" label="厂商" width="100" />
+          <el-table-column prop="device_type" label="设备类型" width="90" />
           <el-table-column prop="ip" label="IP" width="140" />
           <el-table-column prop="port" label="端口" width="70" />
-          <el-table-column prop="username" label="用户名" />
+          <el-table-column prop="username" label="用户名" width="120" />
+          <el-table-column prop="url" label="Web管理URL" show-overflow-tooltip />
         </el-table>
       </div>
       <template #footer>
@@ -231,6 +272,7 @@ import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { encrypt } from '@/utils/crypto'
+import { useSettings } from '@/composables/useSettings'
 import {
   getDeviceList,
   addDevice,
@@ -242,6 +284,7 @@ import {
 } from '@/api/devices'
 
 const router = useRouter()
+const { maskText } = useSettings()
 
 // 搜索和筛选
 const searchKeyword = ref('')
@@ -283,11 +326,14 @@ const dialogTitle = computed(() => {
 // 设备表单
 const deviceForm = reactive({
   id: null,
+  sort_order: 0,
   manufacturer: 'Hillstone',
+  device_type: 'FW',
   ip: '',
   port: 22,
   username: '',
-  password: ''
+  password: '',
+  url: ''
 })
 
 // 表单验证规则
@@ -349,11 +395,14 @@ const handlePageChange = () => {
 const handleAdd = () => {
   dialogType.value = 'add'
   deviceForm.id = null
+  deviceForm.sort_order = 0
   deviceForm.manufacturer = 'Hillstone'
+  deviceForm.device_type = 'FW'
   deviceForm.ip = ''
   deviceForm.port = 22
   deviceForm.username = ''
   deviceForm.password = ''
+  deviceForm.url = ''
   dialogVisible.value = true
   
   nextTick(() => {
@@ -367,11 +416,14 @@ const handleAdd = () => {
 const handleEdit = (row) => {
   dialogType.value = 'edit'
   deviceForm.id = row.id
+  deviceForm.sort_order = row.sort_order || 0
   deviceForm.manufacturer = row.manufacturer
+  deviceForm.device_type = row.device_type || ''
   deviceForm.ip = row.ip
   deviceForm.port = row.port
   deviceForm.username = row.username
   deviceForm.password = ''
+  deviceForm.url = row.url || ''
   dialogVisible.value = true
 }
 
@@ -389,11 +441,14 @@ const handleSubmit = async () => {
   
   try {
     const data = {
+      sort_order: deviceForm.sort_order || 0,
       manufacturer: deviceForm.manufacturer,
+      device_type: deviceForm.device_type || '',
       ip: deviceForm.ip,
       port: deviceForm.port,
       username: deviceForm.username,
-      password: encrypt(deviceForm.password)
+      password: encrypt(deviceForm.password),
+      url: deviceForm.url || ''
     }
     
     let res
@@ -404,7 +459,11 @@ const handleSubmit = async () => {
     }
     
     if (res.code === 0) {
-      ElMessage.success(dialogType.value === 'add' ? '添加成功' : '更新成功')
+      if (res.data && res.data.updated) {
+        ElMessage.success(`设备已存在，已覆盖更新: ${deviceForm.ip}`)
+      } else {
+        ElMessage.success(dialogType.value === 'add' ? '添加成功' : '更新成功')
+      }
       dialogVisible.value = false
       loadList()
     } else {
@@ -472,9 +531,9 @@ const handleExport = async () => {
       return
     }
     const csvContent = [
-      'manufacturer,ip,username,password,port',
+      'order,manufacturer,device_type,ip,username,password,port,url',
       ...devices.map(d =>
-        `${d.manufacturer},${d.ip},${d.username},${d.password || ''},${d.port || 22}`
+        `${d.sort_order || 0},${d.manufacturer},${d.device_type || ''},${d.ip},${d.username},${d.password || ''},${d.port || 22},${d.url || ''}`
       )
     ].join('\n')
     const BOM = '﻿'
@@ -542,6 +601,9 @@ const handleBatchPatrol = () => {
 // 打开导入对话框
 const handleImport = () => {
   importPreview.value = []
+  if (uploadRef.value) {
+    uploadRef.value.clearFiles()
+  }
   importDialogVisible.value = true
 }
 
@@ -558,14 +620,17 @@ const handleFileChange = (file) => {
         const line = lines[i].trim()
         if (!line) continue
         const parts = line.split(',')
-        // CSV列序: manufacturer,ip,username,password,port
-        if (parts.length >= 5) {
+        // CSV列序: order,manufacturer,device_type,ip,username,password,port,url
+        if (parts.length >= 7) {
           devices.push({
-            manufacturer: parts[0].trim(),
-            ip: parts[1].trim(),
-            username: parts[2].trim(),
-            password: parts[3].trim(),
-            port: parseInt(parts[4].trim()) || 22
+            sort_order: parseInt(parts[0].trim()) || 0,
+            manufacturer: parts[1].trim(),
+            device_type: parts[2].trim() || '',
+            ip: parts[3].trim(),
+            username: parts[4].trim(),
+            password: parts[5].trim(),
+            port: parseInt(parts[6].trim()) || 22,
+            url: (parts.length >= 8 ? parts[7].trim() : '')
           })
         }
       }
@@ -590,8 +655,8 @@ const handleImportSubmit = async () => {
   }
 
   importing.value = true
-  let successCount = 0
-  let dupCount = 0
+  let addCount = 0    // 新增
+  let updateCount = 0 // IP重复，已覆盖更新
   let failCount = 0
 
   try {
@@ -599,16 +664,21 @@ const handleImportSubmit = async () => {
       try {
         const password = encrypt(device.password)
         const res = await addDevice({
+          sort_order: device.sort_order || 0,
           manufacturer: device.manufacturer,
+          device_type: device.device_type || '',
           ip: device.ip,
           port: device.port,
           username: device.username,
-          password: password
+          password: password,
+          url: device.url || ''
         })
         if (res.code === 0) {
-          successCount++
-        } else if (res.code === 2) {
-          dupCount++
+          if (res.data && res.data.updated) {
+            updateCount++
+          } else {
+            addCount++
+          }
         } else {
           failCount++
         }
@@ -618,12 +688,13 @@ const handleImportSubmit = async () => {
     }
 
     // 导入完成后，刷新模板CSV（密码已加密写入磁盘，无弹窗）
+    const successCount = addCount + updateCount
     if (successCount > 0) {
       await refreshTemplate()
     }
 
-    const parts = [`成功 ${successCount} 台`]
-    if (dupCount > 0) parts.push(`跳过重复 ${dupCount} 台`)
+    const parts = [`新增 ${addCount} 台`]
+    if (updateCount > 0) parts.push(`覆盖更新 ${updateCount} 台`)
     if (failCount > 0) parts.push(`失败 ${failCount} 台`)
     ElMessage.success(`导入完成：${parts.join('，')}` + (successCount > 0 ? '，CSV密码已加密' : ''))
 
@@ -643,7 +714,10 @@ onMounted(() => {
 
 <style scoped>
 .page-container {
-  min-height: calc(100vh - 120px);
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .card-header {
@@ -667,6 +741,11 @@ onMounted(() => {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+}
+
+.text-muted {
+  color: #c0c4cc;
+  font-size: 12px;
 }
 
 .import-preview {

@@ -1,45 +1,40 @@
 <template>
   <div class="page-container">
     <el-row :gutter="20">
-      <!-- 左侧：URL导入 + 截图任务 -->
+      <!-- 左侧：设备URL列表 + 截图任务 -->
       <el-col :span="14">
-        <!-- URL导入卡片 -->
+        <!-- 设备URL列表卡片 -->
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>URL列表</span>
+              <span>设备URL列表</span>
               <div class="header-actions">
-                <el-upload
-                  :show-file-list="false"
-                  :before-upload="handleFileUpload"
-                  accept=".txt"
-                >
-                  <el-button type="primary" size="small">
-                    <el-icon><Upload /></el-icon>
-                    导入TXT
-                  </el-button>
-                </el-upload>
-                <el-button type="danger" size="small" @click="handleClearUrls" :disabled="urlList.length === 0">
-                  <el-icon><Delete /></el-icon>
-                  清空
+                <el-button type="primary" size="small" @click="loadDevicesWithUrl">
+                  <el-icon><Refresh /></el-icon>
+                  刷新
                 </el-button>
               </div>
             </div>
           </template>
 
-          <div class="url-input-area">
-            <el-input
-              v-model="urlText"
-              type="textarea"
-              :rows="4"
-              placeholder="请输入URL列表，每行一个，例如：&#10;https://192.168.1.100:8588&#10;https://192.168.1.102"
-            />
-            <el-button type="success" @click="handleImportText" style="margin-top: 8px" size="small">
-              <el-icon><Plus /></el-icon>
-              导入文本
-            </el-button>
-            <span v-if="urlList.length > 0" class="url-count">已导入 {{ urlList.length }} 个URL</span>
-          </div>
+          <el-table :data="devicesWithUrl" style="width: 100%" max-height="250" v-loading="devicesLoading">
+            <el-table-column prop="manufacturer" label="厂商" width="100">
+              <template #default="{ row }">
+                <el-tag size="small">{{ row.manufacturer }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="ip" label="IP" width="150">
+              <template #default="{ row }">
+                {{ maskText(row.ip, 'ip') }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="url" label="Web管理URL" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ maskText(row.url, 'url') }}
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!devicesLoading && devicesWithUrl.length === 0" description="暂无配置URL的设备，请先在设备管理中为设备配置Web管理URL" :image-size="60" />
         </el-card>
 
         <!-- 截图任务卡片 -->
@@ -47,7 +42,7 @@
           <template #header>
             <div class="card-header">
               <span>截图任务</span>
-              <el-button type="primary" size="small" @click="showCreateDialog" :disabled="urlList.length === 0">
+              <el-button type="primary" size="small" @click="showCreateDialog" :disabled="devicesWithUrl.length === 0">
                 <el-icon><Plus /></el-icon>
                 创建任务
               </el-button>
@@ -70,7 +65,7 @@
               </el-button>
             </div>
           </div>
-          <el-empty v-else description="暂无截图任务，请先导入URL再创建任务" :image-size="60" />
+          <el-empty v-else description="暂无截图任务，请先确保设备管理中有配置了URL的设备" :image-size="60" />
 
           <!-- 当前任务设备列表 -->
           <template v-if="currentTaskId">
@@ -94,8 +89,8 @@
                 <div class="device-info">
                   <el-icon v-if="device.status === 'active'" class="active-icon" color="#67c23a"><VideoPlay /></el-icon>
                   <el-icon v-else class="pending-icon"><Clock /></el-icon>
-                  <span class="device-ip">{{ device.ip }}</span>
-                  <span class="device-url" :title="device.url">{{ device.url }}</span>
+                  <span class="device-ip">{{ maskText(device.ip, 'ip') }}</span>
+                  <span class="device-url" :title="maskText(device.url, 'url')">{{ maskText(device.url, 'url') }}</span>
                 </div>
                 <div class="device-meta">
                   <el-tag v-if="device.status === 'active'" type="success" size="small">当前</el-tag>
@@ -119,8 +114,8 @@
                 >
                   <div class="device-info">
                     <el-icon class="done-icon" color="#909399"><CircleCheck /></el-icon>
-                    <span class="device-ip">{{ device.ip }}</span>
-                    <span class="device-url" :title="device.url">{{ device.url }}</span>
+                    <span class="device-ip">{{ maskText(device.ip, 'ip') }}</span>
+                    <span class="device-url" :title="maskText(device.url, 'url')">{{ maskText(device.url, 'url') }}</span>
                   </div>
                   <div class="device-meta">
                     <span class="screenshot-count">{{ device.screenshot_count }}张</span>
@@ -150,11 +145,11 @@
           <div class="status-info">
             <div class="status-item">
               <span class="label">当前IP：</span>
-              <span class="value">{{ status.current_ip || '未选择' }}</span>
+              <span class="value">{{ maskText(status.current_ip || '未选择', 'ip') }}</span>
             </div>
             <div class="status-item">
               <span class="label">当前URL：</span>
-              <span class="value url-value">{{ status.current_url || '未选择' }}</span>
+              <span class="value url-value">{{ maskText(status.current_url || '未选择', 'url') }}</span>
             </div>
             <div class="status-item">
               <span class="label">截图数量：</span>
@@ -171,10 +166,9 @@
               type="primary"
               size="large"
               @click="handleManualCapture"
-              :disabled="!status.current_ip"
             >
               <el-icon><Camera /></el-icon>
-              手动截图
+              截图测试
             </el-button>
             <el-button
               :type="status.is_listening ? 'danger' : 'success'"
@@ -193,14 +187,18 @@
             <span>快捷键设置</span>
           </template>
           <div class="hotkey-setting">
-            <el-input
-              v-model="hotkeyInput"
-              placeholder="例如: <alt>+q, <ctrl>+<shift>+s"
-            >
-              <template #append>
-                <el-button @click="handleSetHotkey">保存</el-button>
-              </template>
-            </el-input>
+            <div class="hotkey-row">
+              <span class="hotkey-label">截图快捷键：</span>
+              <el-input
+                v-model="hotkeyInput"
+                placeholder="例如: <alt>+q"
+                class="hotkey-input"
+              >
+                <template #append>
+                  <el-button @click="handleSetHotkey">保存</el-button>
+                </template>
+              </el-input>
+            </div>
             <div class="hotkey-tips">
               <p>支持的修饰键: &lt;ctrl&gt;, &lt;alt&gt;, &lt;shift&gt;</p>
               <p>示例: &lt;alt&gt;+q, &lt;ctrl&gt;+&lt;shift&gt;+s, f12</p>
@@ -214,6 +212,10 @@
             <div class="card-header">
               <span>截图历史</span>
               <div class="header-actions">
+                <el-button type="danger" link @click="handleClearHistory" :disabled="historyList.length === 0">
+                  <el-icon><Delete /></el-icon>
+                  清空历史
+                </el-button>
                 <el-button type="success" link @click="handleOpenFolder">
                   <el-icon><FolderOpened /></el-icon>
                   打开文件夹
@@ -226,48 +228,61 @@
             </div>
           </template>
           <el-table :data="historyList" style="width: 100%" max-height="300">
-            <el-table-column prop="ip" label="IP" width="120" />
+            <el-table-column prop="ip" label="IP" width="120">
+              <template #default="{ row }">
+                {{ maskText(row.ip, 'ip') }}
+              </template>
+            </el-table-column>
             <el-table-column prop="file_path" label="文件路径" show-overflow-tooltip />
             <el-table-column prop="created_at" label="时间" width="160" />
+            <el-table-column label="操作" width="80" fixed="right">
+              <template #default="{ row }">
+                <el-button type="danger" link size="small" @click="handleDeleteRecord(row.id)">
+                  <el-icon><Delete /></el-icon>
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </el-card>
       </el-col>
     </el-row>
 
     <!-- 创建任务对话框 -->
-    <el-dialog v-model="createDialogVisible" title="创建截图任务" width="500px">
+    <el-dialog v-model="createDialogVisible" title="创建截图任务" width="550px">
       <el-form label-width="80px">
         <el-form-item label="任务名称">
           <el-input v-model="newTaskName" placeholder="请输入任务名称" />
         </el-form-item>
-        <el-form-item label="选择URL">
-          <div class="dialog-url-select">
+        <el-form-item label="选择设备">
+          <div class="dialog-device-select">
             <el-checkbox
-              v-model="selectAllUrls"
+              v-model="selectAllDevices"
               :indeterminate="isIndeterminate"
-              @change="handleSelectAllUrls"
+              @change="handleSelectAllDevices"
             >
-              全选 ({{ urlList.length }}个)
+              全选 ({{ devicesWithUrl.length }}台)
             </el-checkbox>
-            <div class="dialog-url-list">
-              <el-checkbox-group v-model="selectedUrlIds">
-                <div v-for="url in urlList" :key="url.id" class="dialog-url-item">
-                  <el-checkbox :value="url.id">
-                    <span class="dialog-url-ip">{{ url.ip }}</span>
-                    <span class="dialog-url-text">{{ url.url }}</span>
+            <div class="dialog-device-list">
+              <el-checkbox-group v-model="selectedDeviceIds">
+                <div v-for="device in devicesWithUrl" :key="device.id" class="dialog-device-item">
+                  <el-checkbox :value="device.id">
+                    <span class="dialog-device-ip">{{ maskText(device.ip, 'ip') }}</span>
+                    <el-tag size="small" style="margin-right: 8px">{{ device.manufacturer }}</el-tag>
+                    <span class="dialog-device-url">{{ maskText(device.url, 'url') }}</span>
                   </el-checkbox>
                 </div>
               </el-checkbox-group>
             </div>
             <div class="dialog-selected-count">
-              已选择 <b>{{ selectedUrlIds.length }}</b> 个URL
+              已选择 <b>{{ selectedDeviceIds.length }}</b> 台设备
             </div>
           </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleCreateTask" :disabled="selectedUrlIds.length === 0 || !newTaskName.trim()">
+        <el-button type="primary" @click="handleCreateTask" :disabled="selectedDeviceIds.length === 0 || !newTaskName.trim()">
           确认创建
         </el-button>
       </template>
@@ -279,18 +294,18 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  importUrls, getUrlList, clearUrls,
   createScreenshotTask, getScreenshotTasks, getTaskDevices,
   setTaskActiveDevice, completeTaskDevice, deleteScreenshotTask,
   captureScreen, getScreenshotStatus, setHotkey,
-  getScreenshotHistory, startListening, stopListening,
-  openScreenshotFolder
+  getScreenshotHistory, clearScreenshotHistory, startListening, stopListening,
+  openScreenshotFolder, getDevicesWithUrl, deleteScreenshotRecord
 } from '@/api/screenshot'
+import { useSettings } from '@/composables/useSettings'
 
 // ==================== 状态 ====================
-const loading = ref(false)
-const urlText = ref('')
-const urlList = ref([])
+const { maskText } = useSettings()
+const devicesWithUrl = ref([])
+const devicesLoading = ref(false)
 const historyList = ref([])
 const hotkeyInput = ref('<alt>+q')
 
@@ -313,8 +328,8 @@ const showDoneDevices = ref(true)
 // 创建任务对话框
 const createDialogVisible = ref(false)
 const newTaskName = ref('')
-const selectedUrlIds = ref([])
-const selectAllUrls = ref(false)
+const selectedDeviceIds = ref([])
+const selectAllDevices = ref(false)
 
 // 截图计数变化检测（用于自动刷新历史）
 const lastScreenshotCount = ref(0)
@@ -333,14 +348,14 @@ const doneDevices = computed(() => {
 })
 
 const isIndeterminate = computed(() => {
-  const selected = selectedUrlIds.value.length
-  return selected > 0 && selected < urlList.value.length
+  const selected = selectedDeviceIds.value.length
+  return selected > 0 && selected < devicesWithUrl.value.length
 })
 
 // ==================== 生命周期 ====================
 
 onMounted(() => {
-  loadUrls()
+  loadDevicesWithUrl()
   loadTasks()
   loadHistory()
   refreshStatus()
@@ -353,71 +368,19 @@ onUnmounted(() => {
   }
 })
 
-// ==================== URL管理 ====================
+// ==================== 设备URL列表 ====================
 
-async function loadUrls() {
-  loading.value = true
+async function loadDevicesWithUrl() {
+  devicesLoading.value = true
   try {
-    const res = await getUrlList()
+    const res = await getDevicesWithUrl()
     if (res.code === 0) {
-      urlList.value = res.data.urls
+      devicesWithUrl.value = res.data.devices
     }
   } catch (e) {
-    ElMessage.error('加载URL列表失败')
+    ElMessage.error('加载设备URL列表失败')
   } finally {
-    loading.value = false
-  }
-}
-
-async function handleImportText() {
-  if (!urlText.value.trim()) {
-    ElMessage.warning('请输入URL')
-    return
-  }
-  try {
-    const res = await importUrls(urlText.value)
-    if (res.code === 0) {
-      ElMessage.success(res.message)
-      urlText.value = ''
-      loadUrls()
-    } else {
-      ElMessage.warning(res.message)
-    }
-  } catch (e) {
-    ElMessage.error('导入失败')
-  }
-}
-
-function handleFileUpload(file) {
-  const reader = new FileReader()
-  reader.onload = async (e) => {
-    const text = e.target.result
-    try {
-      const res = await importUrls(text)
-      if (res.code === 0) {
-        ElMessage.success(res.message)
-        loadUrls()
-      } else {
-        ElMessage.warning(res.message)
-      }
-    } catch (err) {
-      ElMessage.error('导入失败')
-    }
-  }
-  reader.readAsText(file)
-  return false
-}
-
-async function handleClearUrls() {
-  try {
-    await ElMessageBox.confirm('确定要清空所有URL吗？', '提示', { type: 'warning' })
-    await clearUrls()
-    urlList.value = []
-    ElMessage.success('已清空')
-  } catch (e) {
-    if (e !== 'cancel') {
-      ElMessage.error('清空失败')
-    }
+    devicesLoading.value = false
   }
 }
 
@@ -456,16 +419,16 @@ function switchTask(taskId) {
 
 function showCreateDialog() {
   newTaskName.value = `截图任务 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
-  selectedUrlIds.value = []
-  selectAllUrls.value = false
+  selectedDeviceIds.value = []
+  selectAllDevices.value = false
   createDialogVisible.value = true
 }
 
-function handleSelectAllUrls(checked) {
+function handleSelectAllDevices(checked) {
   if (checked) {
-    selectedUrlIds.value = urlList.value.map(u => u.id)
+    selectedDeviceIds.value = devicesWithUrl.value.map(d => d.id)
   } else {
-    selectedUrlIds.value = []
+    selectedDeviceIds.value = []
   }
 }
 
@@ -474,14 +437,14 @@ async function handleCreateTask() {
     ElMessage.warning('请输入任务名称')
     return
   }
-  if (selectedUrlIds.value.length === 0) {
-    ElMessage.warning('请选择至少一个URL')
+  if (selectedDeviceIds.value.length === 0) {
+    ElMessage.warning('请选择至少一台设备')
     return
   }
   try {
     const res = await createScreenshotTask({
       name: newTaskName.value.trim(),
-      url_ids: selectedUrlIds.value
+      device_ids: selectedDeviceIds.value
     })
     if (res.code === 0) {
       ElMessage.success('任务创建成功')
@@ -522,7 +485,7 @@ async function handleSelectDevice(device) {
   try {
     const res = await setTaskActiveDevice(currentTaskId.value, device.id)
     if (res.code === 0) {
-      ElMessage.success(`已选择设备: ${device.ip}`)
+      ElMessage.success(`已选择设备: ${maskText(device.ip, 'ip')}`)
       // 刷新设备列表（状态会重新排序）
       await loadTaskDevices(currentTaskId.value)
       refreshStatus()
@@ -629,6 +592,43 @@ async function loadHistory() {
   }
 }
 
+async function handleClearHistory() {
+  try {
+    await ElMessageBox.confirm(
+      '确定要清空所有截图历史记录吗？本地截图文件也将被删除，此操作不可恢复！',
+      '警告',
+      { confirmButtonText: '确认清空', cancelButtonText: '取消', type: 'warning' }
+    )
+    const res = await clearScreenshotHistory()
+    if (res.code === 0) {
+      ElMessage.success(res.message)
+      historyList.value = []
+      refreshStatus()
+    } else {
+      ElMessage.error(res.message)
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('清空失败')
+    }
+  }
+}
+
+async function handleDeleteRecord(recordId) {
+  try {
+    const res = await deleteScreenshotRecord(recordId)
+    if (res.code === 0) {
+      ElMessage.success(res.message)
+      loadHistory()
+      refreshStatus()
+    } else {
+      ElMessage.error(res.message)
+    }
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
 async function handleOpenFolder() {
   try {
     const res = await openScreenshotFolder()
@@ -643,7 +643,10 @@ async function handleOpenFolder() {
 
 <style scoped>
 .page-container {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .card-header {
@@ -655,16 +658,6 @@ async function handleOpenFolder() {
 .header-actions {
   display: flex;
   gap: 8px;
-}
-
-.url-input-area {
-  margin-bottom: 8px;
-}
-
-.url-count {
-  margin-left: 12px;
-  font-size: 13px;
-  color: #909399;
 }
 
 /* 任务列表 */
@@ -865,6 +858,24 @@ async function handleOpenFolder() {
   padding: 4px 0;
 }
 
+.hotkey-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+
+.hotkey-label {
+  font-size: 13px;
+  color: #606266;
+  white-space: nowrap;
+  min-width: 80px;
+}
+
+.hotkey-input {
+  flex: 1;
+}
+
 .hotkey-tips {
   margin-top: 8px;
   font-size: 12px;
@@ -876,11 +887,11 @@ async function handleOpenFolder() {
 }
 
 /* 创建任务对话框 */
-.dialog-url-select {
+.dialog-device-select {
   width: 100%;
 }
 
-.dialog-url-list {
+.dialog-device-list {
   max-height: 300px;
   overflow-y: auto;
   border: 1px solid #e4e7ed;
@@ -889,16 +900,16 @@ async function handleOpenFolder() {
   margin-top: 8px;
 }
 
-.dialog-url-item {
+.dialog-device-item {
   padding: 4px 0;
 }
 
-.dialog-url-ip {
+.dialog-device-ip {
   font-weight: 500;
   margin-right: 8px;
 }
 
-.dialog-url-text {
+.dialog-device-url {
   font-size: 12px;
   color: #909399;
 }

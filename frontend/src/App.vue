@@ -19,8 +19,8 @@
           <span>巡检任务</span>
         </el-menu-item>
         <el-menu-item index="/ssh-terminal">
-          <el-icon><Terminal /></el-icon>
-          <span>SSH终端</span>
+          <el-icon><Connection /></el-icon>
+          <span>远程终端</span>
         </el-menu-item>
         <el-menu-item index="/template-manage">
           <el-icon><Document /></el-icon>
@@ -33,6 +33,10 @@
         <el-menu-item index="/screenshot">
           <el-icon><Camera /></el-icon>
           <span>截图</span>
+        </el-menu-item>
+        <el-menu-item index="/settings">
+          <el-icon><Tools /></el-icon>
+          <span>设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -72,10 +76,11 @@ const activeMenu = computed(() => {
 const currentPageTitle = computed(() => {
   const titleMap = {
     '/patrol': '巡检任务',
-    '/ssh-terminal': 'SSH终端',
+    '/ssh-terminal': '远程终端',
     '/template-manage': '模板管理',
     '/device-manage': '设备管理',
-    '/screenshot': '截图'
+    '/screenshot': '截图',
+    '/settings': '设置'
   }
   if (route.path.startsWith('/patrol/')) {
     return '任务详情'
@@ -154,7 +159,21 @@ html, body, #app {
   flex: 1;
   height: 0;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   box-sizing: border-box;
+}
+
+/* 深色主题 */
+html.dark .header {
+  background-color: #141414;
+  border-bottom-color: #333;
+}
+html.dark .header-title {
+  color: #e5e7eb;
+}
+html.dark .main {
+  background-color: #0d0d0d;
 }
 </style>
