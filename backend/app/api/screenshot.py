@@ -43,6 +43,11 @@ class SetActiveDeviceRequest(BaseModel):
     device_id: int
 
 
+class AppendDevicesRequest(BaseModel):
+    """向截图任务追加设备请求"""
+    device_ids: List[int]
+
+
 # ==================== URL管理（保留兼容） ====================
 
 @router.post("/import-urls", response_model=ApiResponse, summary="导入URL列表")
@@ -154,6 +159,24 @@ def delete_task(task_id: int):
         return ApiResponse(code=0, message="任务已删除", data=None)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除任务失败: {str(e)}")
+
+
+@router.post("/tasks/{task_id}/append", response_model=ApiResponse, summary="向截图任务追加设备")
+def append_devices(task_id: int, request: AppendDevicesRequest):
+    """向截图任务追加新设备，过滤掉已存在的设备"""
+    try:
+        result = db.append_devices_to_task(task_id, request.device_ids)
+        if result is None:
+            return ApiResponse(code=1, message="追加设备失败", data=None)
+        if result['added'] == 0:
+            return ApiResponse(code=0, message="所选设备已全部在任务中", data=result)
+        return ApiResponse(
+            code=0,
+            message=f"成功追加 {result['added']} 台设备",
+            data=result
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"追加设备失败: {str(e)}")
 
 
 # ==================== 截图操作 ====================

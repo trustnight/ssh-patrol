@@ -34,6 +34,11 @@ export function completeTaskDevice(taskId) {
   return request({ url: `/screenshot/tasks/${taskId}/complete`, method: 'post' })
 }
 
+// 向截图任务追加设备
+export function appendDevicesToTask(taskId, deviceIds) {
+  return request({ url: `/screenshot/tasks/${taskId}/append`, method: 'post', data: { device_ids: deviceIds } })
+}
+
 // 删除截图任务
 export function deleteScreenshotTask(taskId) {
   return request({ url: `/screenshot/tasks/${taskId}`, method: 'delete' })
