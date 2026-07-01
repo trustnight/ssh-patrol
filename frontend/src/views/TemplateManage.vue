@@ -217,7 +217,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getTemplateList,
@@ -258,6 +258,11 @@ const saveForm = reactive({
   deviceType: 'FW'
 })
 
+// 顶部查询区切换设备类型时，同步更新保存表单
+watch(() => selectForm.deviceType, (newVal) => {
+  saveForm.deviceType = newVal
+})
+
 // 保存中
 const saving = ref(false)
 
@@ -289,19 +294,22 @@ const loadTemplateList = async () => {
 // 模板变化
 const handleTemplateChange = async () => {
   if (!selectForm.templateName) return
-  
-  manufacturerList.value = []
-  selectForm.manufacturer = ''
-  selectForm.deviceType = 'FW'
+
+  const prevManufacturer = selectForm.manufacturer
   commandList.value = []
-  
+
   try {
     const res = await getTemplateManufacturers(selectForm.templateName)
     if (res.code === 0) {
       manufacturerList.value = res.data.manufacturers || []
       if (manufacturerList.value.length > 0) {
-        selectForm.manufacturer = manufacturerList.value[0]
+        // 三个选项相互独立：新模板若支持当前厂商则保留，否则回退到第一个
+        selectForm.manufacturer = manufacturerList.value.includes(prevManufacturer)
+          ? prevManufacturer
+          : manufacturerList.value[0]
         await loadCommands()
+      } else {
+        selectForm.manufacturer = ''
       }
     }
   } catch (error) {
@@ -320,6 +328,7 @@ const loadCommands = async () => {
       // 更新保存表单
       saveForm.templateName = selectForm.templateName
       saveForm.manufacturer = selectForm.manufacturer
+      saveForm.deviceType = selectForm.deviceType
     }
   } catch (error) {
     console.error('加载命令列表失败:', error)
@@ -329,6 +338,11 @@ const loadCommands = async () => {
 
 // 设备类型变化
 const handleDeviceTypeChange = async () => {
+  await loadCommands()
+}
+
+// 厂商变化
+const handleManufacturerChange = async () => {
   await loadCommands()
 }
 

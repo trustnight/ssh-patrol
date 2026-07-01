@@ -71,10 +71,16 @@
           <template v-if="currentTaskId">
             <div class="device-section-header">
               <span>任务设备列表</span>
-              <span class="device-count">
-                待处理: <b>{{ pendingDevices.length }}</b> |
-                已完成: <b>{{ doneDevices.length }}</b>
-              </span>
+              <div class="device-section-actions">
+                <span class="device-count">
+                  待处理: <b>{{ pendingDevices.length }}</b> |
+                  已完成: <b>{{ doneDevices.length }}</b>
+                </span>
+                <el-button type="primary" link size="small" @click="showAppendDialog">
+                  <el-icon><Plus /></el-icon>
+                  追加设备
+                </el-button>
+              </div>
             </div>
 
             <!-- 待处理设备 -->
@@ -248,10 +254,10 @@
       </el-col>
     </el-row>
 
-    <!-- 创建任务对话框 -->
-    <el-dialog v-model="createDialogVisible" title="创建截图任务" width="550px">
+    <!-- 创建/追加任务设备对话框 -->
+    <el-dialog v-model="createDialogVisible" :title="dialogTitle" width="550px">
       <el-form label-width="80px">
-        <el-form-item label="任务名称">
+        <el-form-item v-if="dialogMode === 'create'" label="任务名称">
           <el-input v-model="newTaskName" placeholder="请输入任务名称" />
         </el-form-item>
         <el-form-item label="选择设备">
@@ -261,11 +267,11 @@
               :indeterminate="isIndeterminate"
               @change="handleSelectAllDevices"
             >
-              全选 ({{ devicesWithUrl.length }}台)
+              全选 ({{ dialogTotalCount }}台)
             </el-checkbox>
             <div class="dialog-device-list">
               <el-checkbox-group v-model="selectedDeviceIds">
-                <div v-for="device in devicesWithUrl" :key="device.id" class="dialog-device-item">
+                <div v-for="device in dialogDevices" :key="device.id" class="dialog-device-item">
                   <el-checkbox :value="device.id">
                     <span class="dialog-device-ip">{{ maskText(device.ip, 'ip') }}</span>
                     <el-tag size="small" style="margin-right: 8px">{{ device.manufacturer }}</el-tag>
@@ -282,8 +288,8 @@
       </el-form>
       <template #footer>
         <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleCreateTask" :disabled="selectedDeviceIds.length === 0 || !newTaskName.trim()">
-          确认创建
+        <el-button type="primary" @click="handleDialogConfirm" :disabled="selectedDeviceIds.length === 0 || (dialogMode === 'create' && !newTaskName.trim())">
+          {{ dialogConfirmText }}
         </el-button>
       </template>
     </el-dialog>
@@ -298,7 +304,8 @@ import {
   setTaskActiveDevice, completeTaskDevice, deleteScreenshotTask,
   captureScreen, getScreenshotStatus, setHotkey,
   getScreenshotHistory, clearScreenshotHistory, startListening, stopListening,
-  openScreenshotFolder, getDevicesWithUrl, deleteScreenshotRecord
+  openScreenshotFolder, getDevicesWithUrl, deleteScreenshotRecord,
+  appendDevicesToTask
 } from '@/api/screenshot'
 import { useSettings } from '@/composables/useSettings'
 
@@ -327,6 +334,7 @@ const showDoneDevices = ref(true)
 
 // 创建任务对话框
 const createDialogVisible = ref(false)
+const dialogMode = ref('create') // 'create' | 'append'
 const newTaskName = ref('')
 const selectedDeviceIds = ref([])
 const selectAllDevices = ref(false)
@@ -349,7 +357,27 @@ const doneDevices = computed(() => {
 
 const isIndeterminate = computed(() => {
   const selected = selectedDeviceIds.value.length
-  return selected > 0 && selected < devicesWithUrl.value.length
+  return selected > 0 && selected < dialogDevices.value.length
+})
+
+// 对话框设备列表（创建=全部，追加=当前任务未包含的设备）
+const dialogDevices = computed(() => {
+  if (dialogMode.value === 'create') {
+    return devicesWithUrl.value
+  }
+  // 追加模式：过滤掉当前任务已有的设备 url_id
+  const existingIds = new Set(taskDevices.value.map(d => d.url_id))
+  return devicesWithUrl.value.filter(d => !existingIds.has(d.id))
+})
+
+const dialogTotalCount = computed(() => dialogDevices.value.length)
+
+const dialogTitle = computed(() => {
+  return dialogMode.value === 'create' ? '创建截图任务' : '追加设备到当前任务'
+})
+
+const dialogConfirmText = computed(() => {
+  return dialogMode.value === 'create' ? '确认创建' : '确认追加'
 })
 
 // ==================== 生命周期 ====================
@@ -418,7 +446,20 @@ function switchTask(taskId) {
 }
 
 function showCreateDialog() {
+  dialogMode.value = 'create'
   newTaskName.value = `截图任务 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+  selectedDeviceIds.value = []
+  selectAllDevices.value = false
+  createDialogVisible.value = true
+}
+
+function showAppendDialog() {
+  if (!currentTaskId.value) {
+    ElMessage.warning('请先选择一个任务')
+    return
+  }
+  dialogMode.value = 'append'
+  newTaskName.value = ''
   selectedDeviceIds.value = []
   selectAllDevices.value = false
   createDialogVisible.value = true
@@ -426,9 +467,17 @@ function showCreateDialog() {
 
 function handleSelectAllDevices(checked) {
   if (checked) {
-    selectedDeviceIds.value = devicesWithUrl.value.map(d => d.id)
+    selectedDeviceIds.value = dialogDevices.value.map(d => d.id)
   } else {
     selectedDeviceIds.value = []
+  }
+}
+
+async function handleDialogConfirm() {
+  if (dialogMode.value === 'create') {
+    await handleCreateTask()
+  } else {
+    await handleAppendDevices()
   }
 }
 
@@ -457,6 +506,29 @@ async function handleCreateTask() {
     }
   } catch (e) {
     ElMessage.error('创建任务失败')
+  }
+}
+
+async function handleAppendDevices() {
+  if (!currentTaskId.value) {
+    ElMessage.warning('请先选择一个任务')
+    return
+  }
+  if (selectedDeviceIds.value.length === 0) {
+    ElMessage.warning('请选择至少一台设备')
+    return
+  }
+  try {
+    const res = await appendDevicesToTask(currentTaskId.value, selectedDeviceIds.value)
+    if (res.code === 0) {
+      ElMessage.success(res.message)
+      createDialogVisible.value = false
+      await loadTaskDevices(currentTaskId.value)
+    } else {
+      ElMessage.error(res.message)
+    }
+  } catch (e) {
+    ElMessage.error('追加设备失败')
   }
 }
 
@@ -715,8 +787,10 @@ async function handleOpenFolder() {
   font-weight: normal;
 }
 
-.device-count b {
-  color: #303133;
+.device-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .device-row {

@@ -1169,6 +1169,52 @@ class Database:
             print(f"创建截图任务错误: {str(e)}")
             return None
 
+    def append_devices_to_task(self, task_id, device_ids):
+        """向截图任务追加设备，过滤掉已存在的设备"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 查询任务中已有的设备 url_id（url_id 对应 devices.id）
+            cursor.execute(
+                'SELECT url_id FROM screenshot_task_devices WHERE task_id = ?',
+                (task_id,)
+            )
+            existing_ids = {row[0] for row in cursor.fetchall()}
+
+            # 过滤掉已存在的设备
+            new_device_ids = [did for did in device_ids if did not in existing_ids]
+            if not new_device_ids:
+                conn.close()
+                return {'added': 0, 'skipped': len(device_ids)}
+
+            # 获取当前最大 sort_order
+            cursor.execute(
+                'SELECT COALESCE(MAX(sort_order), 0) FROM screenshot_task_devices WHERE task_id = ?',
+                (task_id,)
+            )
+            max_order = cursor.fetchone()[0]
+
+            added_count = 0
+            for order, device_id in enumerate(new_device_ids, start=max_order + 1):
+                cursor.execute(
+                    'SELECT ip, url FROM devices WHERE id = ?', (device_id,)
+                )
+                row = cursor.fetchone()
+                if row and row[1]:  # url 不为空才添加
+                    cursor.execute(
+                        'INSERT INTO screenshot_task_devices (task_id, url_id, url, ip, status, screenshot_count, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        (task_id, device_id, row[1], row[0], 'pending', 0, order)
+                    )
+                    added_count += 1
+
+            conn.commit()
+            conn.close()
+            return {'added': added_count, 'skipped': len(device_ids) - added_count}
+        except Exception as e:
+            print(f"追加截图任务设备错误: {str(e)}")
+            return None
+
     def get_screenshot_tasks(self):
         """获取截图任务列表"""
         try:
